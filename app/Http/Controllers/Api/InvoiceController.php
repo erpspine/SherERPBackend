@@ -135,6 +135,8 @@ class InvoiceController extends Controller
 
     public function approve(Invoice $invoice): JsonResponse
     {
+        $this->authorize('approve', $invoice);
+
         if ($invoice->status === 'approved') {
             return response()->json([
                 'message' => 'Invoice is already approved.',

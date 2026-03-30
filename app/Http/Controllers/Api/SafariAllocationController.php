@@ -10,12 +10,19 @@ use Illuminate\Validation\Rule;
 
 class SafariAllocationController extends Controller
 {
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
-        $allocations = SafariAllocation::query()
+        $this->authorize('viewAny', SafariAllocation::class);
+
+        $query = SafariAllocation::query()
             ->with(['lead', 'proformaInvoice', 'vehicle', 'driver'])
-            ->latest('id')
-            ->get();
+            ->latest('id');
+
+        if ($request->user()?->hasRole('Driver')) {
+            $query->where('driver_id', $request->user()->id);
+        }
+
+        $allocations = $query->get();
 
         return response()->json([
             'message' => 'Safari allocations fetched successfully.',
@@ -23,18 +30,22 @@ class SafariAllocationController extends Controller
         ]);
     }
 
-    public function show(SafariAllocation $allocation): JsonResponse
+    public function show(SafariAllocation $safariAllocation): JsonResponse
     {
-        $allocation->load(['lead', 'proformaInvoice', 'vehicle', 'driver']);
+        $this->authorize('view', $safariAllocation);
+
+        $safariAllocation->load(['lead', 'proformaInvoice', 'vehicle', 'driver']);
 
         return response()->json([
             'message' => 'Safari allocation fetched successfully.',
-            'allocation' => $this->transform($allocation),
+            'allocation' => $this->transform($safariAllocation),
         ]);
     }
 
     public function store(Request $request): JsonResponse
     {
+        $this->authorize('create', SafariAllocation::class);
+
         $validated = $request->validate([
             'leadId' => ['required', 'integer', 'exists:leads,id'],
             'proformaInvoiceId' => ['nullable', 'integer', 'exists:proforma_invoices,id'],
@@ -61,8 +72,10 @@ class SafariAllocationController extends Controller
         ], 201);
     }
 
-    public function update(Request $request, SafariAllocation $allocation): JsonResponse
+    public function update(Request $request, SafariAllocation $safariAllocation): JsonResponse
     {
+        $this->authorize('update', $safariAllocation);
+
         $validated = $request->validate([
             'leadId' => ['sometimes', 'integer', 'exists:leads,id'],
             'proformaInvoiceId' => ['sometimes', 'nullable', 'integer', 'exists:proforma_invoices,id'],
@@ -72,26 +85,28 @@ class SafariAllocationController extends Controller
             'notes' => ['sometimes', 'nullable', 'string', 'max:1000'],
         ]);
 
-        $allocation->update([
-            'lead_id' => $validated['leadId'] ?? $allocation->lead_id,
-            'proforma_invoice_id' => array_key_exists('proformaInvoiceId', $validated) ? $validated['proformaInvoiceId'] : $allocation->proforma_invoice_id,
-            'vehicle_id' => $validated['vehicleId'] ?? $allocation->vehicle_id,
-            'driver_id' => $validated['driverId'] ?? $allocation->driver_id,
-            'status' => $validated['status'] ?? $allocation->status,
-            'notes' => array_key_exists('notes', $validated) ? $validated['notes'] : $allocation->notes,
+        $safariAllocation->update([
+            'lead_id' => $validated['leadId'] ?? $safariAllocation->lead_id,
+            'proforma_invoice_id' => array_key_exists('proformaInvoiceId', $validated) ? $validated['proformaInvoiceId'] : $safariAllocation->proforma_invoice_id,
+            'vehicle_id' => $validated['vehicleId'] ?? $safariAllocation->vehicle_id,
+            'driver_id' => $validated['driverId'] ?? $safariAllocation->driver_id,
+            'status' => $validated['status'] ?? $safariAllocation->status,
+            'notes' => array_key_exists('notes', $validated) ? $validated['notes'] : $safariAllocation->notes,
         ]);
 
-        $allocation->load(['lead', 'proformaInvoice', 'vehicle', 'driver']);
+        $safariAllocation->load(['lead', 'proformaInvoice', 'vehicle', 'driver']);
 
         return response()->json([
             'message' => 'Safari allocation updated successfully.',
-            'allocation' => $this->transform($allocation),
+            'allocation' => $this->transform($safariAllocation),
         ]);
     }
 
-    public function destroy(SafariAllocation $allocation): JsonResponse
+    public function destroy(SafariAllocation $safariAllocation): JsonResponse
     {
-        $allocation->delete();
+        $this->authorize('delete', $safariAllocation);
+
+        $safariAllocation->delete();
 
         return response()->json([
             'message' => 'Safari allocation deleted successfully.',

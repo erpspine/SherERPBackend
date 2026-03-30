@@ -6,6 +6,7 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use App\Http\Controllers\Controller;
 use App\Models\JobCard;
 use App\Models\Lead;
+use App\Models\SafariAllocation;
 use App\Models\Setting;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -15,9 +16,22 @@ use Symfony\Component\HttpFoundation\Response;
 
 class JobCardController extends Controller
 {
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
-        $jobCards = JobCard::query()->with('lead')->latest('id')->get();
+        $this->authorize('viewAny', JobCard::class);
+
+        $query = JobCard::query()->with('lead')->latest('id');
+
+        if ($request->user()?->hasRole('Driver')) {
+            $query->whereIn(
+                'lead_id',
+                SafariAllocation::query()
+                    ->where('driver_id', $request->user()->id)
+                    ->select('lead_id')
+            );
+        }
+
+        $jobCards = $query->get();
 
         return response()->json([
             'message' => 'Job cards fetched successfully.',
@@ -27,6 +41,8 @@ class JobCardController extends Controller
 
     public function show(JobCard $jobCard): JsonResponse
     {
+        $this->authorize('view', $jobCard);
+
         $jobCard->load('lead');
 
         return response()->json([
@@ -37,6 +53,8 @@ class JobCardController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        $this->authorize('create', JobCard::class);
+
         $validated = $request->validate([
             'leadId' => ['required', 'integer', 'exists:leads,id'],
             'guideLanguage' => ['sometimes', 'string', 'max:60'],
@@ -110,6 +128,8 @@ class JobCardController extends Controller
 
     public function update(Request $request, JobCard $jobCard): JsonResponse
     {
+        $this->authorize('update', $jobCard);
+
         $validated = $request->validate([
             'leadId' => ['sometimes', 'integer', 'exists:leads,id'],
             'guideLanguage' => ['sometimes', 'string', 'max:60'],
@@ -189,6 +209,8 @@ class JobCardController extends Controller
 
     public function destroy(JobCard $jobCard): JsonResponse
     {
+        $this->authorize('delete', $jobCard);
+
         $jobCard->delete();
 
         return response()->json([
@@ -198,6 +220,8 @@ class JobCardController extends Controller
 
     public function pdf(JobCard $jobCard): Response
     {
+        $this->authorize('view', $jobCard);
+
         $jobCard->load('lead');
 
         $company = [

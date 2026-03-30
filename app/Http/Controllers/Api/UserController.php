@@ -273,6 +273,29 @@ class UserController extends Controller
         ]);
     }
 
+    public function permissions(): JsonResponse
+    {
+        return response()->json([
+            'permissions' => config('access.permissions', []),
+        ]);
+    }
+
+    public function rolePermissions(): JsonResponse
+    {
+        $allPermissions = config('access.permissions', []);
+        $roles = config('access.roles', []);
+
+        return response()->json([
+            'roles' => collect($roles)
+                ->map(fn (array $permissions, string $name): array => [
+                    'name' => $name,
+                    'permissions' => $permissions === ['*'] ? $allPermissions : $permissions,
+                ])
+                ->values(),
+            'permissions' => $allPermissions,
+        ]);
+    }
+
     /**
      * @return array<int, string>
      */
