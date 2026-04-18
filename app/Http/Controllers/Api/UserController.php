@@ -25,7 +25,7 @@ class UserController extends Controller
         $users = User::query()
             ->with('roles:id,name')
             ->latest('id')
-            ->get(['id', 'name', 'email', 'phone', 'role', 'status', 'created_at']);
+            ->get(['id', 'name', 'email', 'phone', 'role', 'status', 'receive_notifications', 'last_login_at', 'created_at']);
 
         return response()->json([
             'message' => 'Users fetched successfully.',
@@ -79,6 +79,10 @@ class UserController extends Controller
                 'message' => 'Invalid email or password.',
             ], 401);
         }
+
+        $user->forceFill([
+            'last_login_at' => now(),
+        ])->save();
 
         $user->loadMissing('roles:id,name');
         $token = $user->createToken('api-token')->plainTextToken;
@@ -187,6 +191,7 @@ class UserController extends Controller
             'roles' => ['nullable', 'array', 'min:1'],
             'roles.*' => ['string', Rule::in($this->availableRoles())],
             'status' => ['required', Rule::in(['Active', 'Inactive'])],
+            'receive_notifications' => ['sometimes', 'boolean'],
         ]);
 
         $roles = $this->extractRoleNames($validated, true);
@@ -203,6 +208,7 @@ class UserController extends Controller
                 'phone' => $validated['phone'],
                 'role' => $primaryRole,
                 'status' => $validated['status'],
+                'receive_notifications' => (bool) ($validated['receive_notifications'] ?? false),
                 'password' => $plainPassword,
             ]);
 
@@ -237,6 +243,7 @@ class UserController extends Controller
             'roles' => ['nullable', 'array', 'min:1'],
             'roles.*' => ['string', Rule::in($this->availableRoles())],
             'status' => ['required', Rule::in(['Active', 'Inactive'])],
+            'receive_notifications' => ['sometimes', 'boolean'],
         ]);
 
         $roles = $this->extractRoleNames($validated, false, $user);
@@ -246,6 +253,7 @@ class UserController extends Controller
             'phone' => $validated['phone'],
             'role' => $roles[0] ?? $user->role,
             'status' => $validated['status'],
+            'receive_notifications' => (bool) ($validated['receive_notifications'] ?? false),
         ]);
         $user->syncRoles($roles);
         $user->loadMissing('roles:id,name');
@@ -341,6 +349,8 @@ class UserController extends Controller
             'role' => $user->role ?? $roles->first(),
             'roles' => $roles,
             'status' => $user->status,
+            'receive_notifications' => (bool) $user->receive_notifications,
+            'last_login_at' => $user->last_login_at,
             'created_at' => $user->created_at,
         ];
 

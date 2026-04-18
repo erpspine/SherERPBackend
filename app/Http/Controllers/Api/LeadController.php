@@ -3,9 +3,12 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Mail\LeadCreatedMail;
 use App\Models\Lead;
+use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Validation\Rule;
 
 class LeadController extends Controller
@@ -50,6 +53,19 @@ class LeadController extends Controller
         ]);
 
         $lead = Lead::create($this->mapRequestToDb($validated));
+
+        // Get current authenticated user
+        /** @var User $currentUser */
+        $currentUser = $request->user();
+
+        // Send notifications to users with receive_notifications enabled
+        $notificationUsers = User::where('receive_notifications', true)
+            ->where('status', 'Active')
+            ->get();
+
+        foreach ($notificationUsers as $user) {
+            Mail::to($user->email)->send(new LeadCreatedMail($lead, $currentUser));
+        }
 
         return response()->json([
             'message' => 'Lead created successfully.',
