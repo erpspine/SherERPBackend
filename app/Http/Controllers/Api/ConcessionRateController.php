@@ -7,9 +7,13 @@ use App\Models\ConcessionRate;
 use App\Models\Park;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class ConcessionRateController extends Controller
 {
+    private const TYPES      = ['non_resident', 'resident', 'citizen'];
+    private const CATEGORIES = ['adult', 'child'];
+
     public function index(): JsonResponse
     {
         $concessionRates = ConcessionRate::query()->with('park')->orderBy('id')->get();
@@ -33,10 +37,10 @@ class ConcessionRateController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'park_id' => ['required', 'integer', 'exists:parks,id'],
-            'type' => ['required', 'string', 'max:50'],
-            'category' => ['required', 'string', 'max:50'],
-            'rate' => ['required', 'numeric', 'min:0'],
+            'park_id'  => ['required', 'integer', 'exists:parks,id'],
+            'type'     => ['required', 'string', Rule::in(self::TYPES)],
+            'category' => ['required', 'string', Rule::in(self::CATEGORIES)],
+            'rate'     => ['required', 'numeric', 'min:0'],
         ]);
 
         $exists = ConcessionRate::query()
@@ -66,10 +70,10 @@ class ConcessionRateController extends Controller
     public function update(Request $request, ConcessionRate $concessionRate): JsonResponse
     {
         $validated = $request->validate([
-            'park_id' => ['sometimes', 'integer', 'exists:parks,id'],
-            'type' => ['sometimes', 'string', 'max:50'],
-            'category' => ['sometimes', 'string', 'max:50'],
-            'rate' => ['sometimes', 'numeric', 'min:0'],
+            'park_id'  => ['sometimes', 'integer', 'exists:parks,id'],
+            'type'     => ['sometimes', 'string', Rule::in(self::TYPES)],
+            'category' => ['sometimes', 'string', Rule::in(self::CATEGORIES)],
+            'rate'     => ['sometimes', 'numeric', 'min:0'],
         ]);
 
         $checkParkId = $validated['park_id'] ?? $concessionRate->park_id;
@@ -110,13 +114,24 @@ class ConcessionRateController extends Controller
         ]);
     }
 
+    /** List all concession rates for a specific park, grouped by type → category */
     public function byPark(Park $park): JsonResponse
     {
-        $concessionRates = $park->concessionRates()->orderBy('type')->orderBy('category')->get();
+        $rates = $park->concessionRates()->get();
+
+        $grouped = collect(self::TYPES)->mapWithKeys(function (string $type) use ($rates): array {
+            return [$type => collect(self::CATEGORIES)->mapWithKeys(function (string $cat) use ($rates, $type): array {
+                $row = $rates->first(fn(ConcessionRate $r) => $r->type === $type && $r->category === $cat);
+                return [$cat => $row ? (float) $row->rate : null];
+            })];
+        });
 
         return response()->json([
             'message' => 'Concession rates fetched successfully.',
-            'concessionRates' => $concessionRates->map(fn(ConcessionRate $concessionRate): array => $this->transform($concessionRate))->values(),
+            'park'    => ['id' => $park->id, 'name' => $park->name, 'region' => $park->region],
+            'types'   => self::TYPES,
+            'concessionRates' => $rates->map(fn(ConcessionRate $concessionRate): array => $this->transform($concessionRate))->values(),
+            'rates'   => $grouped,
         ]);
     }
 

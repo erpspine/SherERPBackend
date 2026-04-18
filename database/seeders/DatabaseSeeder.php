@@ -17,6 +17,7 @@ class DatabaseSeeder extends Seeder
         $this->call([
             \Database\Seeders\RoleAndPermissionSeeder::class,
             \Database\Seeders\UserSeeder::class,
+            \Database\Seeders\RatesSeeder::class,
         ]);
     }
 }

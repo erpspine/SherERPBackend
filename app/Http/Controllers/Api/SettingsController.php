@@ -50,6 +50,7 @@ class SettingsController extends Controller
 
     public function updateCompany(Request $request): JsonResponse
     {
+
         $validator = Validator::make($request->all(), [
             'company_name'           => ['sometimes', 'string', 'max:255'],
             'company_email'          => ['sometimes', 'email', 'max:255'],

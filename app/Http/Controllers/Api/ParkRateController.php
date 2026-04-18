@@ -11,6 +11,9 @@ use Illuminate\Validation\Rule;
 
 class ParkRateController extends Controller
 {
+    private const TYPES      = ['non_resident', 'resident', 'citizen'];
+    private const CATEGORIES = ['adult', 'child'];
+
     public function index(): JsonResponse
     {
         $rates = ParkRate::query()->with('park')->orderBy('id')->get();
@@ -35,8 +38,8 @@ class ParkRateController extends Controller
     {
         $validated = $request->validate([
             'park_id'  => ['required', 'integer', 'exists:parks,id'],
-            'type'     => ['required', 'string', 'max:50'],
-            'category' => ['required', 'string', 'max:50'],
+            'type'     => ['required', 'string', Rule::in(self::TYPES)],
+            'category' => ['required', 'string', Rule::in(self::CATEGORIES)],
             'rate'     => ['required', 'numeric', 'min:0'],
         ]);
 
@@ -66,8 +69,8 @@ class ParkRateController extends Controller
     {
         $validated = $request->validate([
             'park_id'  => ['sometimes', 'integer', 'exists:parks,id'],
-            'type'     => ['sometimes', 'string', 'max:50'],
-            'category' => ['sometimes', 'string', 'max:50'],
+            'type'     => ['sometimes', 'string', Rule::in(self::TYPES)],
+            'category' => ['sometimes', 'string', Rule::in(self::CATEGORIES)],
             'rate'     => ['sometimes', 'numeric', 'min:0'],
         ]);
 
@@ -107,14 +110,24 @@ class ParkRateController extends Controller
         ]);
     }
 
-    /** List all rates for a specific park */
+    /** List all rates for a specific park, grouped by type → category */
     public function byPark(Park $park): JsonResponse
     {
-        $rates = $park->rates()->orderBy('type')->orderBy('category')->get();
+        $rates = $park->rates()->get();
+
+        $grouped = collect(self::TYPES)->mapWithKeys(function (string $type) use ($rates): array {
+            return [$type => collect(self::CATEGORIES)->mapWithKeys(function (string $cat) use ($rates, $type): array {
+                $row = $rates->first(fn(ParkRate $r) => $r->type === $type && $r->category === $cat);
+                return [$cat => $row ? (float) $row->rate : null];
+            })];
+        });
 
         return response()->json([
-            'message'  => 'Park rates fetched successfully.',
+            'message' => 'Park rates fetched successfully.',
+            'park'    => ['id' => $park->id, 'name' => $park->name, 'region' => $park->region],
+            'types'   => self::TYPES,
             'parkRates' => $rates->map(fn(ParkRate $rate): array => $this->transform($rate))->values(),
+            'rates'   => $grouped,
         ]);
     }
 

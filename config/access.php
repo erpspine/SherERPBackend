@@ -88,6 +88,8 @@ return [
             'safari-allocations.view',
             'safari-allocations.create',
             'safari-allocations.update',
+            'settings.view',
+            'settings.update',
         ],
         'Finance' => [
             'dashboard.view',
@@ -101,6 +103,7 @@ return [
             'invoice-payments.view',
             'invoice-payments.create',
             'settings.view',
+            'settings.update',
         ],
         'Driver' => [
             'dashboard.view',
