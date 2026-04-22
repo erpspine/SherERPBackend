@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Mail\LeadCreatedMail;
+use App\Models\Client;
 use App\Models\Lead;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
@@ -54,6 +55,8 @@ class LeadController extends Controller
 
         $lead = Lead::create($this->mapRequestToDb($validated));
 
+        $this->createClientFromLeadIfMissing($validated);
+
         // Get current authenticated user
         /** @var User $currentUser */
         $currentUser = $request->user();
@@ -71,6 +74,24 @@ class LeadController extends Controller
             'message' => 'Lead created successfully.',
             'lead' => $this->transformLead($lead),
         ], 201);
+    }
+
+    /**
+     * Create a client from lead details if one does not already exist.
+     *
+     * @param  array<string, mixed>  $validated
+     */
+    private function createClientFromLeadIfMissing(array $validated): void
+    {
+        Client::firstOrCreate(
+            ['email' => $validated['agentEmail']],
+            [
+                'name' => $validated['agentContact'],
+                'company' => $validated['clientCompany'],
+                'phone' => $validated['agentPhone'],
+                'address' => $validated['clientCountry'],
+            ]
+        );
     }
 
     public function update(Request $request, Lead $lead): JsonResponse

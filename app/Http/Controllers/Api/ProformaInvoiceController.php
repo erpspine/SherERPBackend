@@ -40,19 +40,23 @@ class ProformaInvoiceController extends Controller
 
     public function convertFromQuotation(Request $request, Quotation $quotation): JsonResponse
     {
-        if (ProformaInvoice::query()->where('quotation_id', $quotation->id)->exists()) {
-            return response()->json([
-                'message' => 'A proforma invoice already exists for this quotation.',
-            ], 409);
-        }
-
         $senderId = $request->user()?->id;
 
-        $proformaInvoice = DB::transaction(function () use ($quotation, $senderId): ProformaInvoice {
+        [$proformaInvoice, $created] = DB::transaction(function () use ($quotation, $senderId): array {
             $quotation->load('lineItems');
 
-            $proformaInvoice = ProformaInvoice::create([
-                'quotation_id' => $quotation->id,
+            $proformaInvoice = ProformaInvoice::query()->where('quotation_id', $quotation->id)->first();
+            $created = false;
+
+            if ($proformaInvoice === null) {
+                $proformaInvoice = new ProformaInvoice([
+                    'quotation_id' => $quotation->id,
+                    'status' => 'Sent',
+                ]);
+                $created = true;
+            }
+
+            $proformaInvoice->fill([
                 'lead_id' => $quotation->lead_id,
                 'client' => $quotation->client,
                 'attention' => $quotation->attention,
@@ -62,8 +66,10 @@ class ProformaInvoiceController extends Controller
                 'subtotal' => $quotation->subtotal,
                 'tax' => $quotation->tax,
                 'total' => $quotation->total,
-                'status' => 'Sent',
             ]);
+            $proformaInvoice->save();
+
+            $proformaInvoice->lineItems()->delete();
 
             foreach ($quotation->lineItems as $lineItem) {
                 $proformaInvoice->lineItems()->create([
@@ -90,13 +96,15 @@ class ProformaInvoiceController extends Controller
                 ]);
             }
 
-            return $proformaInvoice->fresh('lineItems');
+            return [$proformaInvoice->fresh('lineItems'), $created];
         });
 
         return response()->json([
-            'message' => 'Quotation converted to PI successfully.',
+            'message' => $created
+                ? 'Quotation converted to PI successfully.'
+                : 'Proforma invoice regenerated from quotation successfully.',
             'proformaInvoice' => $this->transformProformaInvoice($proformaInvoice),
-        ], 201);
+        ], $created ? 201 : 200);
     }
 
     public function pdf(ProformaInvoice $proformaInvoice): Response
