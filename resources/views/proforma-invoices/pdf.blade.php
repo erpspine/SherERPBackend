@@ -209,8 +209,13 @@
             border-bottom: 1px solid #d8c89a;
         }
 
-        .text-center { text-align: center; }
-        .text-right  { text-align: right; }
+        .text-center {
+            text-align: center;
+        }
+
+        .text-right {
+            text-align: right;
+        }
 
         /* ── Totals ── */
         .totals {
@@ -314,8 +319,8 @@
                         <div class="doc-heading">PROFORMA INVOICE</div>
                         <div class="contact-line">
                             {{ $company['address'] ?? '' }}
-                            {{ !empty($company['phone'])  ? ' | ' . $company['phone']  : '' }}
-                            {{ !empty($company['email'])  ? ' | ' . $company['email']  : '' }}
+                            {{ !empty($company['phone']) ? ' | ' . $company['phone'] : '' }}
+                            {{ !empty($company['email']) ? ' | ' . $company['email'] : '' }}
                         </div>
                     </td>
                     <td style="width:32%;text-align:right;vertical-align:top;">
@@ -328,7 +333,8 @@
 
             {{-- ── PI Notice ── --}}
             <div class="pi-notice">
-                This is a <strong>Proforma Invoice</strong>. Payment is due upon acceptance of terms. This document does not
+                This is a <strong>Proforma Invoice</strong>. Payment is due upon acceptance of terms. This document does
+                not
                 constitute a tax invoice.
             </div>
 
@@ -342,23 +348,17 @@
                             @if (!empty($proformaInvoice['attention']))
                                 <div>Attn: {{ $proformaInvoice['attention'] }}</div>
                             @endif
-                            @if (!empty($company['address']))
-                                <div style="color:#5d6b6b;font-size:9.5px;">{{ $company['address'] }}</div>
-                            @endif
                         </div>
                     </td>
                     <td style="width:42%;">
                         <div class="ref-block">
                             <span class="ref-label">PI No:</span> {{ $piNo }}<br>
-                            <span class="ref-label">Date:</span> {{ $proformaInvoice['quoteDate'] ?? now()->format('Y-m-d') }}<br>
+                            <span class="ref-label">Date:</span>
+                            {{ $proformaInvoice['quoteDate'] ?? now()->format('Y-m-d') }}<br>
                             @if (!empty($proformaInvoice['quotationId']))
-                                <span class="ref-label">Quotation Ref:</span> QT-{{ now()->format('Y') }}-{{ str_pad($proformaInvoice['quotationId'], 4, '0', STR_PAD_LEFT) }}<br>
+                                <span class="ref-label">Quotation Ref:</span>
+                                QT-{{ now()->format('Y') }}-{{ str_pad($proformaInvoice['quotationId'], 4, '0', STR_PAD_LEFT) }}<br>
                             @endif
-                            @if (!empty($proformaInvoice['leadId']))
-                                <span class="ref-label">Lead Ref:</span> #{{ $proformaInvoice['leadId'] }}<br>
-                            @endif
-                            <span class="ref-label">Status:</span>
-                            <span style="color:#c9a236;font-weight:700;">{{ $proformaInvoice['status'] }}</span>
                         </div>
                     </td>
                 </tr>
@@ -376,11 +376,11 @@
                 <table class="items">
                     <thead>
                         <tr>
-                            <th style="width:5%;"  class="text-center">#</th>
+                            <th style="width:5%;" class="text-center">#</th>
                             <th style="width:13%;">Type</th>
                             <th style="width:32%;">Description</th>
-                            <th style="width:9%;"  class="text-center">Unit</th>
-                            <th style="width:7%;"  class="text-right">Qty</th>
+                            <th style="width:9%;" class="text-center">Unit</th>
+                            <th style="width:7%;" class="text-right">Qty</th>
                             <th style="width:17%;" class="text-right">Rate ({{ $currency }})</th>
                             <th style="width:17%;" class="text-right">Total ({{ $currency }})</th>
                         </tr>
@@ -388,7 +388,7 @@
                     <tbody>
                         @php
                             $grouped = collect($proformaInvoice['lineItems'])->groupBy('dayTitle');
-                            $rowNum  = 1;
+                            $rowNum = 1;
                         @endphp
                         @forelse ($grouped as $dayTitle => $dayItems)
                             @php $firstItem = $dayItems->first(); @endphp
@@ -410,71 +410,71 @@
                                     <td class="text-right">{{ number_format((float) $item['total'], 2) }}</td>
                                 </tr>
                             @endforeach
-                        @empty
-                            <tr>
-                                <td colspan="7" class="text-center">No line items found.</td>
-                            </tr>
-                        @endforelse
-                    </tbody>
+                            @empty
+                                <tr>
+                                    <td colspan="7" class="text-center">No line items found.</td>
+                                </tr>
+                            @endforelse
+                        </tbody>
+                    </table>
+                </div>
+
+                {{-- ── Totals ── --}}
+                <table class="totals">
+                    <tr>
+                        <td>Subtotal ({{ $currency }})</td>
+                        <td class="text-right">{{ number_format((float) $proformaInvoice['subtotal'], 2) }}</td>
+                    </tr>
+                    <tr>
+                        <td>Tax ({{ $company['vat'] ?? '0' }}%)</td>
+                        <td class="text-right">{{ number_format((float) $proformaInvoice['tax'], 2) }}</td>
+                    </tr>
+                    <tr class="grand">
+                        <td>Total ({{ $currency }})</td>
+                        <td class="text-right">{{ number_format((float) $proformaInvoice['total'], 2) }}</td>
+                    </tr>
                 </table>
-            </div>
 
-            {{-- ── Totals ── --}}
-            <table class="totals">
-                <tr>
-                    <td>Subtotal ({{ $currency }})</td>
-                    <td class="text-right">{{ number_format((float) $proformaInvoice['subtotal'], 2) }}</td>
-                </tr>
-                <tr>
-                    <td>Tax ({{ $company['vat'] ?? '0' }}%)</td>
-                    <td class="text-right">{{ number_format((float) $proformaInvoice['tax'], 2) }}</td>
-                </tr>
-                <tr class="grand">
-                    <td>Total ({{ $currency }})</td>
-                    <td class="text-right">{{ number_format((float) $proformaInvoice['total'], 2) }}</td>
-                </tr>
-            </table>
+                {{-- ── Notes ── --}}
+                @if (!empty($proformaInvoice['notes']))
+                    <div class="section-title">Notes</div>
+                    <div class="notes-box">{{ $proformaInvoice['notes'] }}</div>
+                @endif
 
-            {{-- ── Notes ── --}}
-            @if (!empty($proformaInvoice['notes']))
-                <div class="section-title">Notes</div>
-                <div class="notes-box">{{ $proformaInvoice['notes'] }}</div>
-            @endif
+                {{-- ── Payment Terms ── --}}
+                <div class="section-title">Payment Terms</div>
+                <div class="notes-box">Payment is due upon confirmation of this proforma invoice.
+                    Please quote the PI number <strong>{{ $piNo }}</strong> in all remittances.</div>
 
-            {{-- ── Payment Terms ── --}}
-            <div class="section-title">Payment Terms</div>
-            <div class="notes-box">Payment is due upon confirmation of this proforma invoice.
-Please quote the PI number <strong>{{ $piNo }}</strong> in all remittances.</div>
+                {{-- ── Closing ── --}}
+                <table class="closing">
+                    <tr>
+                        <td style="width:55%;">
+                            <p style="margin:0 0 6px;">Please confirm acceptance of this proforma invoice to proceed.</p>
+                            <p style="margin:0;">We appreciate your continued partnership.</p>
+                            <div style="margin-top:30px;">
+                                <div class="sign-label">Authorised Signatory</div>
+                                <div class="sign-line">Name &amp; Signature</div>
+                                <div style="margin-top:10px;">Date: ____________________</div>
+                            </div>
+                        </td>
+                        <td style="width:45%;text-align:right;vertical-align:bottom;">
+                            <div style="font-size:10px;color:#5d6b6b;">
+                                {{ $company['phone'] ?? '' }}<br>
+                                {{ $company['email'] ?? '' }}<br>
+                                @if (!empty($company['tax_registration_number']))
+                                    TIN: {{ $company['tax_registration_number'] }}
+                                @endif
+                            </div>
+                        </td>
+                    </tr>
+                </table>
 
-            {{-- ── Closing ── --}}
-            <table class="closing">
-                <tr>
-                    <td style="width:55%;">
-                        <p style="margin:0 0 6px;">Please confirm acceptance of this proforma invoice to proceed.</p>
-                        <p style="margin:0;">We appreciate your continued partnership.</p>
-                        <div style="margin-top:30px;">
-                            <div class="sign-label">Authorised Signatory</div>
-                            <div class="sign-line">Name &amp; Signature</div>
-                            <div style="margin-top:10px;">Date: ____________________</div>
-                        </div>
-                    </td>
-                    <td style="width:45%;text-align:right;vertical-align:bottom;">
-                        <div style="font-size:10px;color:#5d6b6b;">
-                            {{ $company['phone'] ?? '' }}<br>
-                            {{ $company['email'] ?? '' }}<br>
-                            @if (!empty($company['tax_registration_number']))
-                                TIN: {{ $company['tax_registration_number'] }}
-                            @endif
-                        </div>
-                    </td>
-                </tr>
-            </table>
-
-            <div class="footer">
-                Generated on {{ now()->format('Y-m-d H:i') }}
+                <div class="footer">
+                    Generated on {{ now()->format('Y-m-d H:i') }}
+                </div>
             </div>
         </div>
-    </div>
-</body>
+    </body>
 
-</html>
+    </html>

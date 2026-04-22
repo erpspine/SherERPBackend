@@ -39,6 +39,11 @@ class Lead extends Model
         return $this->hasMany(JobCard::class);
     }
 
+    public function fuelRequisitions(): HasMany
+    {
+        return $this->hasMany(FuelRequisition::class);
+    }
+
     public function quotationSender(): BelongsTo
     {
         return $this->belongsTo(User::class, 'quotation_sent_by');

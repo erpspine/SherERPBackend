@@ -15,6 +15,10 @@ use App\Http\Controllers\Api\JobCardController;
 use App\Http\Controllers\Api\SafariAllocationController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\ClientController;
+use App\Http\Controllers\Api\ChecklistController;
+use App\Http\Controllers\Api\ChecklistItemController;
+use App\Http\Controllers\Api\InspectionController;
+use App\Http\Controllers\Api\FuelRequisitionController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [UserController::class, 'login']);
@@ -41,6 +45,29 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('/clients', [ClientController::class, 'store'])->middleware('permission:clients.create');
     Route::put('/clients/{client}', [ClientController::class, 'update'])->middleware('permission:clients.update');
     Route::delete('/clients/{client}', [ClientController::class, 'destroy'])->middleware('permission:clients.delete');
+
+    Route::get('/checklists', [ChecklistController::class, 'index']);
+    Route::get('/checklists/{checklist}', [ChecklistController::class, 'show']);
+    Route::post('/checklists', [ChecklistController::class, 'store']);
+    Route::put('/checklists/{checklist}', [ChecklistController::class, 'update']);
+    Route::delete('/checklists/{checklist}', [ChecklistController::class, 'destroy']);
+    Route::post('/checklists/{checklist}/items', [ChecklistItemController::class, 'store']);
+    Route::put('/checklists/{checklist}/items/{item}', [ChecklistItemController::class, 'update']);
+    Route::delete('/checklists/{checklist}/items/{item}', [ChecklistItemController::class, 'destroy']);
+
+    Route::get('/inspections', [InspectionController::class, 'index']);
+    Route::get('/inspections/{inspection}', [InspectionController::class, 'show']);
+    Route::get('/inspections/{inspection}/pdf', [InspectionController::class, 'pdf']);
+    Route::post('/inspections/{inspection}/images', [InspectionController::class, 'uploadImage']);
+    Route::post('/inspections', [InspectionController::class, 'store']);
+    Route::put('/inspections/{inspection}', [InspectionController::class, 'update']);
+    Route::delete('/inspections/{inspection}', [InspectionController::class, 'destroy']);
+
+    Route::get('/fuel-requisitions', [FuelRequisitionController::class, 'index'])->middleware('permission:fuel-requisitions.view');
+    Route::get('/fuel-requisitions/{fuelRequisition}', [FuelRequisitionController::class, 'show'])->middleware('permission:fuel-requisitions.view');
+    Route::post('/fuel-requisitions', [FuelRequisitionController::class, 'store'])->middleware('permission:fuel-requisitions.create');
+    Route::post('/fuel-requisitions/{fuelRequisition}/approve', [FuelRequisitionController::class, 'approve'])->middleware('permission:fuel-requisitions.respond');
+    Route::post('/fuel-requisitions/{fuelRequisition}/reject', [FuelRequisitionController::class, 'reject'])->middleware('permission:fuel-requisitions.respond');
 
     Route::get('/leads', [LeadController::class, 'index'])->middleware('permission:leads.view');
     Route::get('/leads/{lead}', [LeadController::class, 'show'])->middleware('permission:leads.view');
@@ -72,6 +99,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
 
     // Company settings
     Route::get('/settings/company',  [SettingsController::class, 'showCompany'])->middleware('permission:settings.view');
+    Route::post('/settings/company', [SettingsController::class, 'updateCompany'])->middleware('permission:settings.update');
     Route::put('/settings/company',  [SettingsController::class, 'updateCompany'])->middleware('permission:settings.update');
 
     // Parks
