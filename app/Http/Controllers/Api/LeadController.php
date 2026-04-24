@@ -37,7 +37,6 @@ class LeadController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'bookingRef' => ['required', 'string', 'max:50', 'unique:leads,booking_ref'],
             'clientCompany' => ['required', 'string', 'max:255'],
             'agentContact' => ['required', 'string', 'max:255'],
             'agentEmail' => ['required', 'email', 'max:255'],
@@ -53,7 +52,15 @@ class LeadController extends Controller
             'bookingStatus' => ['required', Rule::in(['Pending', 'Confirmed', 'Cancelled', 'Completed', 'Quotation Sent', 'PI Sent'])],
         ]);
 
-        $lead = Lead::create($this->mapRequestToDb($validated));
+        $leadData = $this->mapRequestToDb($validated);
+        $leadData['source'] = 'Internal';
+
+        // Generate booking reference if not provided
+        if (!isset($leadData['booking_ref']) || empty($leadData['booking_ref'])) {
+            $leadData['booking_ref'] = $this->createBookingRef();
+        }
+
+        $lead = Lead::create($leadData);
 
         $this->createClientFromLeadIfMissing($validated);
 
@@ -92,6 +99,17 @@ class LeadController extends Controller
                 'address' => $validated['clientCountry'],
             ]
         );
+    }
+
+    /**
+     * Generate a unique booking reference in format: BK-YYYY-XXXX
+     */
+    private function createBookingRef(): string
+    {
+        $year = date('Y');
+        $rand = mt_rand(1000, 9999);
+
+        return "BK-{$year}-{$rand}";
     }
 
     public function update(Request $request, Lead $lead): JsonResponse
@@ -136,6 +154,90 @@ class LeadController extends Controller
         return response()->json([
             'message' => 'Lead deleted successfully.',
         ]);
+    }
+
+    public function generateBookingRef(): JsonResponse
+    {
+        $bookingRef = $this->createBookingRef();
+
+        return response()->json([
+            'message' => 'Booking reference generated successfully.',
+            'bookingRef' => $bookingRef,
+        ]);
+    }
+
+    /**
+     * Capture a lead from an external website (public endpoint).
+     * This endpoint is intended to be called from external websites.
+     * Requires X-Lead-API-Key header for identification.
+     *
+     * @return JsonResponse
+     */
+    public function captureFromWebsite(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'clientCompany' => ['required', 'string', 'max:255'],
+            'agentContact' => ['required', 'string', 'max:255'],
+            'agentEmail' => ['required', 'email', 'max:255'],
+            'agentPhone' => ['required', 'string', 'max:50'],
+            'clientCountry' => ['required', 'string', 'max:120'],
+            'startDate' => ['required', 'date', 'after_or_equal:today'],
+            'endDate' => ['required', 'date', 'after_or_equal:startDate'],
+            'routeParks' => ['required', 'string', 'max:500'],
+            'paxAdults' => ['required', 'integer', 'min:1'],
+            'paxChildren' => ['required', 'integer', 'min:0'],
+            'noOfVehicles' => ['required', 'integer', 'min:1'],
+            'specialRequirements' => ['nullable', 'string'],
+            // Honeypot field for bot protection - should always be empty
+            'website' => ['nullable', 'string', 'max:0'],
+        ]);
+
+        // If honeypot field has any value, reject silently (return success to confuse bots)
+        if (!empty($request->input('website'))) {
+            // Log suspicious activity but return success to bot
+            \Illuminate\Support\Facades\Log::warning('Honeypot triggered for lead submission', [
+                'ip' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+            ]);
+
+            return response()->json([
+                'message' => 'Thank you! Your lead has been received. We will contact you shortly.',
+            ], 201);
+        }
+
+        $leadData = $this->mapRequestToDb($validated);
+        $leadData['source'] = 'Website';
+        $leadData['booking_status'] = 'Pending';
+
+        // Generate booking reference for website leads
+        if (!isset($leadData['booking_ref']) || empty($leadData['booking_ref'])) {
+            $leadData['booking_ref'] = $this->createBookingRef();
+        }
+
+        // Attach API key if provided
+        $apiKey = $request->input('_lead_api_key');
+        if ($apiKey) {
+            $leadData['lead_api_key_id'] = $apiKey->id;
+        }
+
+        $lead = Lead::create($leadData);
+
+        // Create client from lead details
+        $this->createClientFromLeadIfMissing($validated);
+
+        // Send notifications to users with receive_notifications enabled
+        $notificationUsers = User::where('receive_notifications', true)
+            ->where('status', 'Active')
+            ->get();
+
+        foreach ($notificationUsers as $user) {
+            Mail::to($user->email)->send(new LeadCreatedMail($lead, null));
+        }
+
+        return response()->json([
+            'message' => 'Thank you! Your lead has been received. We will contact you shortly.',
+            'lead' => $this->transformLead($lead),
+        ], 201);
     }
 
     /**
@@ -200,6 +302,8 @@ class LeadController extends Controller
             'noOfVehicles' => $lead->no_of_vehicles,
             'specialRequirements' => $lead->special_requirements,
             'bookingStatus' => $lead->booking_status,
+            'source' => $lead->source,
+            'apiKeyName' => $lead->apiKey?->name,
             'sentBy' => $sentByName,
             'sentById' => $sentById,
             'quotationSentAt' => $lead->quotation_sent_at?->toISOString(),

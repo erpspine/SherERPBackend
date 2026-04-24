@@ -16,7 +16,7 @@ class LeadCreatedMail extends Mailable
 
     public function __construct(
         public readonly Lead $lead,
-        public readonly User $createdBy,
+        public readonly ?User $createdBy,
     ) {}
 
     public function envelope(): Envelope

@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 #[Fillable([
     'vehicle_no',
@@ -17,6 +18,11 @@ use Illuminate\Database\Eloquent\Model;
 ])]
 class Vehicle extends Model
 {
+    public function vehicleServices(): HasMany
+    {
+        return $this->hasMany(VehicleService::class);
+    }
+
     /**
      * @return array<string, string>
      */

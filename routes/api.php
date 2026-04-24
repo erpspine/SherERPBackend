@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\SettingsController;
 use App\Http\Controllers\Api\QuotationController;
 use App\Http\Controllers\Api\LeadController;
+use App\Http\Controllers\Api\LeadApiKeyController;
 use App\Http\Controllers\Api\ParkController;
 use App\Http\Controllers\Api\ParkRateController;
 use App\Http\Controllers\Api\ConcessionRateController;
@@ -10,6 +11,8 @@ use App\Http\Controllers\Api\TransportRateController;
 use App\Http\Controllers\Api\ProformaInvoiceController;
 use App\Http\Controllers\Api\InvoiceController;
 use App\Http\Controllers\Api\VehicleController;
+use App\Http\Controllers\Api\VehicleServiceController;
+use App\Http\Controllers\Api\VehicleHistoryController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\JobCardController;
 use App\Http\Controllers\Api\SafariAllocationController;
@@ -24,6 +27,7 @@ use Illuminate\Support\Facades\Route;
 Route::post('/login', [UserController::class, 'login']);
 Route::post('/forgot-password', [UserController::class, 'forgotPassword']);
 Route::post('/reset-password', [UserController::class, 'resetPassword']);
+Route::post('/leads/capture-from-website', [LeadController::class, 'captureFromWebsite'])->middleware('validate.lead.api.key', 'throttle:30,1');
 
 Route::middleware('auth:sanctum')->group(function (): void {
     Route::get('/dashboard', [DashboardController::class, 'index'])->middleware('permission:dashboard.view');
@@ -71,9 +75,18 @@ Route::middleware('auth:sanctum')->group(function (): void {
 
     Route::get('/leads', [LeadController::class, 'index'])->middleware('permission:leads.view');
     Route::get('/leads/{lead}', [LeadController::class, 'show'])->middleware('permission:leads.view');
+    Route::post('/leads/generate-booking-ref', [LeadController::class, 'generateBookingRef'])->middleware('permission:leads.create');
     Route::post('/leads', [LeadController::class, 'store'])->middleware('permission:leads.create');
     Route::put('/leads/{lead}', [LeadController::class, 'update'])->middleware('permission:leads.update');
     Route::delete('/leads/{lead}', [LeadController::class, 'destroy'])->middleware('permission:leads.delete');
+
+    // Lead API Key Management
+    Route::get('/lead-api-keys', [LeadApiKeyController::class, 'index'])->middleware('permission:settings.view');
+    Route::post('/lead-api-keys', [LeadApiKeyController::class, 'store'])->middleware('permission:settings.update');
+    Route::get('/lead-api-keys/{apiKey}', [LeadApiKeyController::class, 'show'])->middleware('permission:settings.view');
+    Route::put('/lead-api-keys/{apiKey}', [LeadApiKeyController::class, 'update'])->middleware('permission:settings.update');
+    Route::delete('/lead-api-keys/{apiKey}', [LeadApiKeyController::class, 'destroy'])->middleware('permission:settings.update');
+    Route::post('/lead-api-keys/{apiKey}/regenerate', [LeadApiKeyController::class, 'regenerate'])->middleware('permission:settings.update');
 
     Route::get('/quotations', [QuotationController::class, 'index'])->middleware('permission:quotations.view');
     Route::get('/quotations/{quotation}', [QuotationController::class, 'show'])->middleware('permission:quotations.view');
@@ -135,9 +148,17 @@ Route::middleware('auth:sanctum')->group(function (): void {
     // Vehicles
     Route::get('/vehicles', [VehicleController::class, 'index'])->middleware('permission:vehicles.view');
     Route::get('/vehicles/{vehicle}', [VehicleController::class, 'show'])->middleware('permission:vehicles.view');
+    Route::get('/vehicles/{vehicle}/history', [VehicleHistoryController::class, 'show'])->middleware('permission:vehicles.view');
     Route::post('/vehicles', [VehicleController::class, 'store'])->middleware('permission:vehicles.create');
     Route::put('/vehicles/{vehicle}', [VehicleController::class, 'update'])->middleware('permission:vehicles.update');
     Route::delete('/vehicles/{vehicle}', [VehicleController::class, 'destroy'])->middleware('permission:vehicles.delete');
+
+    // Vehicle Services
+    Route::get('/vehicle-services', [VehicleServiceController::class, 'index'])->middleware('permission:vehicles.view');
+    Route::get('/vehicle-services/{vehicleService}', [VehicleServiceController::class, 'show'])->middleware('permission:vehicles.view');
+    Route::post('/vehicle-services', [VehicleServiceController::class, 'store'])->middleware('permission:vehicles.update');
+    Route::put('/vehicle-services/{vehicleService}', [VehicleServiceController::class, 'update'])->middleware('permission:vehicles.update');
+    Route::delete('/vehicle-services/{vehicleService}', [VehicleServiceController::class, 'destroy'])->middleware('permission:vehicles.delete');
 
     // Job Cards
     Route::get('/job-cards', [JobCardController::class, 'index'])->middleware('permission:job-cards.view');

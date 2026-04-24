@@ -296,7 +296,7 @@
                                                         style="font-size:11px;color:#9ca3af;margin:0 0 3px;text-transform:uppercase;letter-spacing:.7px;font-weight:600;">
                                                         Created By</p>
                                                     <p style="font-size:13px;font-weight:600;color:#374151;margin:0;">
-                                                        {{ $createdBy->name }}</p>
+                                                        {{ $createdBy?->name ?? 'Website API' }}</p>
                                                 </td>
                                             </tr>
                                         </table>

@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 #[Fillable([
+    'lead_api_key_id',
     'booking_ref',
     'client_company',
     'agent_contact',
@@ -22,6 +23,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'no_of_vehicles',
     'special_requirements',
     'booking_status',
+    'source',
     'quotation_sent_by',
     'quotation_sent_at',
     'pi_sent_by',
@@ -52,6 +54,11 @@ class Lead extends Model
     public function piSender(): BelongsTo
     {
         return $this->belongsTo(User::class, 'pi_sent_by');
+    }
+
+    public function apiKey(): BelongsTo
+    {
+        return $this->belongsTo(LeadApiKey::class);
     }
 
     /**
