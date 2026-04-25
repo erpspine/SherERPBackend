@@ -18,7 +18,10 @@ class ChecklistController extends Controller
     public function index(Request $request): JsonResponse
     {
         $checklists = Checklist::query()
-            ->where('user_id', $request->user()->id)
+            ->where(function ($query) use ($request): void {
+                $query->where('user_id', $request->user()->id)
+                    ->orWhereNull('user_id');
+            })
             ->with('items')
             ->orderBy('checklist_type')
             ->latest('id')
@@ -98,7 +101,7 @@ class ChecklistController extends Controller
         ]);
     }
 
-    public static function transformChecklist(Checklist $checklist): array
+    private function transformChecklist(Checklist $checklist): array
     {
         return [
             'id' => $checklist->id,
@@ -119,7 +122,7 @@ class ChecklistController extends Controller
 
     private function forbiddenIfNotOwnedByUser(Request $request, Checklist $checklist): ?JsonResponse
     {
-        if ((int) $checklist->user_id !== (int) $request->user()->id) {
+        if ($checklist->user_id !== null && (int) $checklist->user_id !== (int) $request->user()->id) {
             return response()->json([
                 'message' => 'You are not authorized to access this checklist.',
             ], 403);

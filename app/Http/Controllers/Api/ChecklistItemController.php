@@ -29,7 +29,7 @@ class ChecklistItemController extends Controller
             'checklist_id' => $checklist->id,
             'text' => $validated['text'],
             'is_completed' => false,
-            'sort_order' => $validated['sort_order'] ?? ($nextSortOrder + 1),
+            'sort_order' => $validated['sort_order'] ?? (($nextSortOrder ?? 0) + 1),
         ]);
 
         return response()->json([
@@ -103,7 +103,7 @@ class ChecklistItemController extends Controller
 
     private function forbiddenIfNotOwnedByUser(Request $request, Checklist $checklist): ?JsonResponse
     {
-        if ((int) $checklist->user_id !== (int) $request->user()->id) {
+        if ($checklist->user_id !== null && (int) $checklist->user_id !== (int) $request->user()->id) {
             return response()->json([
                 'message' => 'You are not authorized to access this checklist.',
             ], 403);
