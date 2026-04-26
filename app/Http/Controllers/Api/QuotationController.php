@@ -19,7 +19,7 @@ class QuotationController extends Controller
     public function index(): JsonResponse
     {
         $quotations = Quotation::query()
-            ->with('lineItems')
+            ->with(['lineItems', 'sentBy'])
             ->latest('id')
             ->get();
 
@@ -31,7 +31,7 @@ class QuotationController extends Controller
 
     public function show(Quotation $quotation): JsonResponse
     {
-        $quotation->load('lineItems');
+        $quotation->load(['lineItems', 'sentBy']);
 
         return response()->json([
             'message' => 'Quotation fetched successfully.',
@@ -42,9 +42,8 @@ class QuotationController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate($this->rules());
-        $senderId = $request->user()?->id;
 
-        $quotation = DB::transaction(function () use ($validated, $senderId): Quotation {
+        $quotation = DB::transaction(function () use ($validated): Quotation {
             $quotation = Quotation::create([
                 'lead_id'      => $validated['leadId'] ?? null,
                 'client'       => $validated['client'],
@@ -55,22 +54,16 @@ class QuotationController extends Controller
                 'subtotal'     => $validated['subtotal'],
                 'tax'          => $validated['tax'],
                 'total'        => $validated['total'],
-                'status'       => $validated['status'],
+                'status'       => 'Pending',
+                'sent_by_id'   => null,
+                'sent_at'      => null,
             ]);
 
             foreach ($validated['lineItems'] as $item) {
                 $quotation->lineItems()->create($this->mapLineItemRequestToDb($item));
             }
 
-            if (!empty($validated['leadId'])) {
-                Lead::query()->whereKey($validated['leadId'])->update([
-                    'booking_status' => 'Quotation Sent',
-                    'quotation_sent_by' => $senderId,
-                    'quotation_sent_at' => now(),
-                ]);
-            }
-
-            return $quotation->fresh('lineItems');
+            return $quotation->fresh(['lineItems', 'sentBy']);
         });
 
         return response()->json([
@@ -82,9 +75,15 @@ class QuotationController extends Controller
     public function update(Request $request, Quotation $quotation): JsonResponse
     {
         $validated = $request->validate($this->rules(isUpdate: true, quotationId: $quotation->id));
-        $senderId = $request->user()?->id;
 
-        $quotation = DB::transaction(function () use ($quotation, $validated, $senderId): Quotation {
+        // Block setting status to Sent via generic update — use the mark-sent endpoint instead
+        if (isset($validated['status']) && $validated['status'] === 'Sent') {
+            return response()->json([
+                'message' => 'Use the mark-sent endpoint to mark a quotation as Sent.',
+            ], 422);
+        }
+
+        $quotation = DB::transaction(function () use ($quotation, $validated): Quotation {
             $quotation->update([
                 'lead_id'      => array_key_exists('leadId', $validated) ? $validated['leadId'] : $quotation->lead_id,
                 'client'       => $validated['client']       ?? $quotation->client,
@@ -105,19 +104,45 @@ class QuotationController extends Controller
                 }
             }
 
-            if (!empty($quotation->lead_id)) {
-                Lead::query()->whereKey($quotation->lead_id)->update([
-                    'booking_status' => 'Quotation Sent',
-                    'quotation_sent_by' => $senderId,
-                    'quotation_sent_at' => now(),
-                ]);
-            }
-
-            return $quotation->fresh('lineItems');
+            return $quotation->fresh(['lineItems', 'sentBy']);
         });
 
         return response()->json([
             'message'   => 'Quotation updated successfully.',
+            'quotation' => $this->transformQuotation($quotation),
+        ]);
+    }
+
+    public function markSent(Request $request, Quotation $quotation): JsonResponse
+    {
+        if ($quotation->status === 'Sent') {
+            $quotation->load(['lineItems', 'sentBy']);
+
+            return response()->json([
+                'message'   => 'Quotation is already marked as Sent.',
+                'quotation' => $this->transformQuotation($quotation),
+            ]);
+        }
+
+        $quotation->update([
+            'status'     => 'Sent',
+            'sent_by_id' => $request->user()->id,
+            'sent_at'    => now(),
+        ]);
+
+        // Update linked lead booking status
+        if ($quotation->lead_id) {
+            Lead::query()->whereKey($quotation->lead_id)->update([
+                'booking_status'    => 'Quotation Sent',
+                'quotation_sent_by' => $request->user()->id,
+                'quotation_sent_at' => now(),
+            ]);
+        }
+
+        $quotation->load(['lineItems', 'sentBy']);
+
+        return response()->json([
+            'message'   => 'Quotation marked as Sent.',
             'quotation' => $this->transformQuotation($quotation),
         ]);
     }
@@ -190,7 +215,7 @@ class QuotationController extends Controller
             'subtotal'                        => [$required, 'numeric', 'min:0'],
             'tax'                             => [$required, 'numeric', 'min:0'],
             'total'                           => [$required, 'numeric', 'min:0'],
-            'status'                          => [$required, Rule::in(['Draft', 'Sent', 'Approved', 'Rejected', 'Converted'])],
+            'status'                          => ['sometimes', Rule::in(['Pending', 'Sent', 'Approved', 'Rejected', 'Converted'])],
         ];
     }
 
@@ -240,6 +265,9 @@ class QuotationController extends Controller
             'tax'         => (float) $quotation->tax,
             'total'       => (float) $quotation->total,
             'status'      => $quotation->status,
+            'sentById'    => $quotation->sent_by_id,
+            'sentBy'      => $quotation->sentBy?->name,
+            'sentAt'      => $quotation->sent_at?->toISOString(),
             'createdAt'   => $quotation->created_at?->toISOString(),
             'updatedAt'   => $quotation->updated_at?->toISOString(),
         ];

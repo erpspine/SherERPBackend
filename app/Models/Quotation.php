@@ -18,6 +18,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'tax',
     'total',
     'status',
+    'sent_by_id',
+    'sent_at',
 ])]
 class Quotation extends Model
 {
@@ -31,6 +33,11 @@ class Quotation extends Model
         return $this->hasMany(\App\Models\QuotationLineItem::class);
     }
 
+    public function sentBy(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\User::class, 'sent_by_id');
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -42,6 +49,7 @@ class Quotation extends Model
             'subtotal'     => 'decimal:2',
             'tax'          => 'decimal:2',
             'total'        => 'decimal:2',
+            'sent_at'      => 'datetime',
         ];
     }
 }

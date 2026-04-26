@@ -102,14 +102,91 @@ class LeadController extends Controller
     }
 
     /**
-     * Generate a unique booking reference in format: BK-YYYY-XXXX
+     * Sync client record from lead data on edit.
+     * Creates the client if they don't exist yet.
+     * If the client already exists, only fills fields that are currently blank.
+     *
+     * @param  array<string, mixed>  $validated
+     */
+    private function syncClientFromLead(array $validated): void
+    {
+        $email = $validated['agentEmail'] ?? null;
+
+        if ($email === null) {
+            return;
+        }
+
+        $client = Client::where('email', $email)->first();
+
+        if ($client === null) {
+            Client::create([
+                'email'   => $email,
+                'name'    => $validated['agentContact'] ?? null,
+                'company' => $validated['clientCompany'] ?? null,
+                'phone'   => $validated['agentPhone'] ?? null,
+                'address' => $validated['clientCountry'] ?? null,
+            ]);
+
+            return;
+        }
+
+        // Only fill fields that are currently blank on the existing client
+        $fill = [];
+
+        if (empty($client->name) && !empty($validated['agentContact'])) {
+            $fill['name'] = $validated['agentContact'];
+        }
+
+        if (empty($client->company) && !empty($validated['clientCompany'])) {
+            $fill['company'] = $validated['clientCompany'];
+        }
+
+        if (empty($client->phone) && !empty($validated['agentPhone'])) {
+            $fill['phone'] = $validated['agentPhone'];
+        }
+
+        if (empty($client->address) && !empty($validated['clientCountry'])) {
+            $fill['address'] = $validated['clientCountry'];
+        }
+
+        if (!empty($fill)) {
+            $client->update($fill);
+        }
+    }
+
+    /**
+     * Generate a unique booking reference in format: BK-YYYY-MM-NNNN
+     * The sequence number resets to 1 at the start of each month.
      */
     private function createBookingRef(): string
     {
-        $year = date('Y');
-        $rand = mt_rand(1000, 9999);
+        $year  = date('Y');
+        $month = date('m');
+        $prefix = "BK-{$year}-{$month}-";
 
-        return "BK-{$year}-{$rand}";
+        // Find the highest sequence number already used this month
+        $latest = Lead::query()
+            ->where('booking_ref', 'like', $prefix . '%')
+            ->orderByDesc('booking_ref')
+            ->value('booking_ref');
+
+        $next = 1;
+
+        if ($latest !== null) {
+            $parts = explode('-', $latest);
+            $lastSeq = (int) end($parts);
+            $next = $lastSeq + 1;
+        }
+
+        $candidate = $prefix . str_pad((string) $next, 4, '0', STR_PAD_LEFT);
+
+        // Collision-safe: if somehow the candidate already exists, keep incrementing
+        while (Lead::query()->where('booking_ref', $candidate)->exists()) {
+            $next++;
+            $candidate = $prefix . str_pad((string) $next, 4, '0', STR_PAD_LEFT);
+        }
+
+        return $candidate;
     }
 
     public function update(Request $request, Lead $lead): JsonResponse
@@ -140,6 +217,17 @@ class LeadController extends Controller
 
         $lead->update($this->mapRequestToDb($validated));
         $lead->refresh();
+
+        $this->syncClientFromLead(array_merge(
+            [
+                'agentEmail'    => $lead->agent_email,
+                'agentContact'  => $lead->agent_contact,
+                'clientCompany' => $lead->client_company,
+                'agentPhone'    => $lead->agent_phone,
+                'clientCountry' => $lead->client_country,
+            ],
+            $validated
+        ));
 
         return response()->json([
             'message' => 'Lead updated successfully.',

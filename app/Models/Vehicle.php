@@ -13,7 +13,10 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'model',
     'year',
     'seats',
+    'mileage',
     'chassis',
+    'specs',
+    'photo',
     'status',
 ])]
 class Vehicle extends Model
@@ -31,6 +34,7 @@ class Vehicle extends Model
         return [
             'year' => 'integer',
             'seats' => 'integer',
+            'mileage' => 'integer',
         ];
     }
 }

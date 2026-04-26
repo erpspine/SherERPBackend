@@ -213,6 +213,11 @@
 </head>
 
 <body>
+    @php
+        $type = $jobCard['type'] ?? 'Safari';
+        $isSafari = $type === 'Safari';
+    @endphp
+
     <div class="sheet">
         <div class="top-band"></div>
         <div class="watermark"></div>
@@ -242,66 +247,119 @@
             <table class="grid">
                 <tr>
                     <td><span class="label">Job Card No:</span> {{ $jobCard['jobCardNo'] }}</td>
-                    <td><span class="label">Booking Ref No:</span> {{ $jobCard['bookingReferenceNo'] }}</td>
+                    <td><span class="label">Type:</span> {{ $type }}</td>
                 </tr>
                 <tr>
-                    <td><span class="label">Tour Operator / Client:</span> {{ $jobCard['tourOperatorClientName'] }}</td>
-                    <td><span class="label">Contact Person:</span> {{ $jobCard['contactPerson'] }}</td>
+                    <td><span class="label">Status:</span> {{ $jobCard['status'] ?? 'Open' }}</td>
+                    <td></td>
                 </tr>
                 <tr>
-                    <td><span class="label">Contact Number:</span> {{ $jobCard['contactNumber'] }}</td>
-                    <td><span class="label">Email:</span> {{ $jobCard['contactEmail'] ?? '-' }}</td>
-                </tr>
-                <tr>
+                    <td><span class="label">Lead ID:</span> {{ $jobCard['leadId'] ?? '-' }}</td>
                     <td>
-                        <span class="label">Adults:</span> {{ $jobCard['numberOfClients']['adults'] }}
-                        &nbsp;|&nbsp;
-                        <span class="label">Children:</span> {{ $jobCard['numberOfClients']['children'] }}
+                        <span class="label">Vehicle:</span>
+                        @if (!empty($jobCard['vehicle']))
+                            {{ $jobCard['vehicle']['vehicle_no'] ?? '-' }} /
+                            {{ $jobCard['vehicle']['plate_no'] ?? '-' }}
+                        @else
+                            -
+                        @endif
                     </td>
-                    <td><span class="label">Nationality:</span> {{ $jobCard['nationality'] ?? '-' }}</td>
                 </tr>
                 <tr>
-                    <td colspan="2"><span class="label">Guide Language:</span> {{ $jobCard['guideLanguage'] }}</td>
+                    <td><span class="label">Time Out:</span> {{ $jobCard['timeOut'] ?? '-' }}</td>
+                    <td><span class="label">Time In:</span> {{ $jobCard['timeIn'] ?? '-' }}</td>
+                </tr>
+                <tr>
+                    <td colspan="2"><span class="label">Route / Summary:</span>
+                        {{ $jobCard['routeSummary'] ?? '-' }}</td>
                 </tr>
             </table>
 
-            <div class="section-title">2. Safari Details</div>
-            <table class="grid">
-                <tr>
-                    <td><span class="label">Start Date:</span> {{ $jobCard['safariStartDate'] }}</td>
-                    <td><span class="label">End Date:</span> {{ $jobCard['safariEndDate'] }}</td>
-                    <td><span class="label">Number of Days:</span> {{ $jobCard['numberOfDays'] }}</td>
-                </tr>
-                <tr>
-                    <td colspan="3"><span class="label">Route / Summary:</span> {{ $jobCard['routeSummary'] ?? '-' }}</td>
-                </tr>
-                <tr>
-                    <td><span class="label">Pick-up Location:</span> {{ $jobCard['pickupLocation'] ?? '-' }}</td>
-                    <td colspan="2"><span class="label">Drop-off Location:</span> {{ $jobCard['dropoffLocation'] ?? '-' }}</td>
-                </tr>
-            </table>
-
-            <div class="section-title">Itinerary</div>
-            <table class="itinerary">
-                <thead>
+            @if ($isSafari)
+                <div class="section-title">2. Safari Details</div>
+                <table class="grid">
                     <tr>
-                        <th style="width:30%;">Day</th>
-                        <th>Description</th>
+                        <td><span class="label">Booking Ref No:</span> {{ $jobCard['bookingReferenceNo'] ?? '-' }}
+                        </td>
+                        <td><span class="label">Start Date:</span> {{ $jobCard['safariStartDate'] ?? '-' }}</td>
+                        <td><span class="label">End Date:</span> {{ $jobCard['safariEndDate'] ?? '-' }}</td>
                     </tr>
-                </thead>
-                <tbody>
-                    @forelse(($jobCard['routeItinerary'] ?? []) as $day)
+                    <tr>
+                        <td><span class="label">Number of Days:</span> {{ $jobCard['numberOfDays'] ?? '-' }}</td>
+                        <td><span class="label">Pick-up Location:</span> {{ $jobCard['pickupLocation'] ?? '-' }}</td>
+                        <td><span class="label">Drop-off Location:</span> {{ $jobCard['dropoffLocation'] ?? '-' }}
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><span class="label">Tour Operator / Client:</span>
+                            {{ $jobCard['tourOperatorClientName'] ?? '-' }}</td>
+                        <td><span class="label">Contact Person:</span> {{ $jobCard['contactPerson'] ?? '-' }}</td>
+                        <td><span class="label">Contact Number:</span> {{ $jobCard['contactNumber'] ?? '-' }}</td>
+                    </tr>
+                    <tr>
+                        <td><span class="label">Email:</span> {{ $jobCard['contactEmail'] ?? '-' }}</td>
+                        <td><span class="label">Adults:</span> {{ $jobCard['adults'] ?? '-' }}</td>
+                        <td><span class="label">Children:</span> {{ $jobCard['children'] ?? '-' }}</td>
+                    </tr>
+                    <tr>
+                        <td colspan="3"><span class="label">Nationality:</span>
+                            {{ $jobCard['nationality'] ?? '-' }}</td>
+                    </tr>
+                </table>
+
+                <div class="section-title">Itinerary</div>
+                <table class="itinerary">
+                    <thead>
                         <tr>
-                            <td>{{ $day['dayTitle'] ?? '-' }}</td>
-                            <td>{{ $day['description'] ?? '-' }}</td>
+                            <th style="width:30%;">Day</th>
+                            <th>Description</th>
                         </tr>
-                    @empty
-                        <tr>
-                            <td colspan="2">No itinerary details provided.</td>
-                        </tr>
-                    @endforelse
-                </tbody>
-            </table>
+                    </thead>
+                    <tbody>
+                        @forelse(($jobCard['routeItinerary'] ?? []) as $day)
+                            <tr>
+                                <td>{{ $day['dayTitle'] ?? '-' }}</td>
+                                <td>{{ $day['description'] ?? '-' }}</td>
+                            </tr>
+                        @empty
+                            <tr>
+                                <td colspan="2">No itinerary details provided.</td>
+                            </tr>
+                        @endforelse
+                    </tbody>
+                </table>
+            @else
+                <div class="section-title">2. Job Type Details</div>
+                <table class="grid">
+                    <tr>
+                        <td><span class="label">Reason:</span> {{ $jobCard['reason'] ?? '-' }}</td>
+                        <td><span class="label">Client Details:</span> {{ $jobCard['clientDetails'] ?? '-' }}</td>
+                    </tr>
+                    <tr>
+                        <td><span class="label">Location:</span> {{ $jobCard['location'] ?? '-' }}</td>
+                        <td><span class="label">KMS:</span> {{ $jobCard['kms'] ?? '-' }}</td>
+                    </tr>
+                </table>
+
+                <div class="section-title">3. Vehicle Run Details</div>
+                <table class="grid">
+                    <tr>
+                        <td><span class="label">Odometer Out:</span> {{ $jobCard['odometerOut'] ?? '-' }}</td>
+                        <td><span class="label">Odometer In:</span> {{ $jobCard['odometerIn'] ?? '-' }}</td>
+                        <td><span class="label">Mileage:</span> {{ $jobCard['mileage'] ?? '-' }}</td>
+                    </tr>
+                    <tr>
+                        <td><span class="label">Fuel Gauge Out:</span> {{ $jobCard['fuelGaugeOut'] ?? '-' }}</td>
+                        <td><span class="label">Fuel Gauge In:</span> {{ $jobCard['fuelGaugeIn'] ?? '-' }}</td>
+                        <td><span class="label">Approx. Fuel Used:</span> {{ $jobCard['approximateFuelUsed'] ?? '-' }}
+                        </td>
+                    </tr>
+                    <tr>
+                        <td colspan="3"><span class="label">Driver Details:</span>
+                            {{ $jobCard['driverDetails'] ?? '-' }}</td>
+                    </tr>
+                </table>
+            @endif
 
             <div class="section-title">Additional Details</div>
             <div class="notes">{{ $jobCard['additionalDetails'] ?? '-' }}</div>

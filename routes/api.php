@@ -20,6 +20,7 @@ use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\ClientController;
 use App\Http\Controllers\Api\ChecklistController;
 use App\Http\Controllers\Api\ChecklistItemController;
+use App\Http\Controllers\Api\DestinationDistanceController;
 use App\Http\Controllers\Api\InspectionController;
 use App\Http\Controllers\Api\FuelRequisitionController;
 use Illuminate\Support\Facades\Route;
@@ -70,6 +71,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::get('/fuel-requisitions', [FuelRequisitionController::class, 'index'])->middleware('permission:fuel-requisitions.view');
     Route::get('/fuel-requisitions/{fuelRequisition}', [FuelRequisitionController::class, 'show'])->middleware('permission:fuel-requisitions.view');
     Route::post('/fuel-requisitions', [FuelRequisitionController::class, 'store'])->middleware('permission:fuel-requisitions.create');
+    Route::match(['patch', 'put'], '/fuel-requisitions/{fuelRequisition}', [FuelRequisitionController::class, 'updateStatus'])->middleware('permission:fuel-requisitions.respond');
     Route::post('/fuel-requisitions/{fuelRequisition}/approve', [FuelRequisitionController::class, 'approve'])->middleware('permission:fuel-requisitions.respond');
     Route::post('/fuel-requisitions/{fuelRequisition}/reject', [FuelRequisitionController::class, 'reject'])->middleware('permission:fuel-requisitions.respond');
 
@@ -92,6 +94,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::get('/quotations/{quotation}', [QuotationController::class, 'show'])->middleware('permission:quotations.view');
     Route::get('/quotations/{quotation}/pdf', [QuotationController::class, 'pdf'])->middleware('permission:quotations.view');
     Route::post('/quotations/{quotation}/convert-to-pi', [ProformaInvoiceController::class, 'convertFromQuotation'])->middleware('permission:quotations.update');
+    Route::patch('/quotations/{quotation}/mark-sent', [QuotationController::class, 'markSent'])->middleware('permission:quotations.update');
     Route::post('/quotations', [QuotationController::class, 'store'])->middleware('permission:quotations.create');
     Route::put('/quotations/{quotation}', [QuotationController::class, 'update'])->middleware('permission:quotations.update');
     Route::delete('/quotations/{quotation}', [QuotationController::class, 'destroy'])->middleware('permission:quotations.delete');
@@ -145,12 +148,18 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::put('/transport-rates/{transportRate}', [TransportRateController::class, 'update'])->middleware('permission:transport-rates.update');
     Route::delete('/transport-rates/{transportRate}', [TransportRateController::class, 'destroy'])->middleware('permission:transport-rates.delete');
 
+    // Destination Distances
+    Route::get('/destination-distances', [DestinationDistanceController::class, 'index']);
+    Route::post('/destination-distances', [DestinationDistanceController::class, 'store']);
+    Route::put('/destination-distances/{destinationDistance}', [DestinationDistanceController::class, 'update']);
+    Route::delete('/destination-distances/{destinationDistance}', [DestinationDistanceController::class, 'destroy']);
+
     // Vehicles
     Route::get('/vehicles', [VehicleController::class, 'index'])->middleware('permission:vehicles.view');
     Route::get('/vehicles/{vehicle}', [VehicleController::class, 'show'])->middleware('permission:vehicles.view');
     Route::get('/vehicles/{vehicle}/history', [VehicleHistoryController::class, 'show'])->middleware('permission:vehicles.view');
     Route::post('/vehicles', [VehicleController::class, 'store'])->middleware('permission:vehicles.create');
-    Route::put('/vehicles/{vehicle}', [VehicleController::class, 'update'])->middleware('permission:vehicles.update');
+    Route::match(['put', 'patch', 'post'], '/vehicles/{vehicle}', [VehicleController::class, 'update'])->middleware('permission:vehicles.update');
     Route::delete('/vehicles/{vehicle}', [VehicleController::class, 'destroy'])->middleware('permission:vehicles.delete');
 
     // Vehicle Services

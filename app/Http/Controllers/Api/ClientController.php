@@ -12,7 +12,8 @@ class ClientController extends Controller
     public function index(): JsonResponse
     {
         $clients = Client::query()
-            ->latest('id')
+            ->selectRaw('clients.*, (SELECT COUNT(*) FROM quotations INNER JOIN leads ON leads.id = quotations.lead_id WHERE leads.agent_email = clients.email) AS quotations_count')
+            ->latest('clients.id')
             ->get();
 
         return response()->json([
@@ -23,6 +24,10 @@ class ClientController extends Controller
 
     public function show(Client $client): JsonResponse
     {
+        $client = Client::query()
+            ->selectRaw('clients.*, (SELECT COUNT(*) FROM quotations INNER JOIN leads ON leads.id = quotations.lead_id WHERE leads.agent_email = clients.email) AS quotations_count')
+            ->findOrFail($client->id);
+
         return response()->json([
             'message' => 'Client fetched successfully.',
             'client' => $this->transform($client),
@@ -80,14 +85,15 @@ class ClientController extends Controller
     private function transform(Client $client): array
     {
         return [
-            'id'        => $client->id,
-            'name'      => $client->name,
-            'company'   => $client->company,
-            'phone'     => $client->phone,
-            'email'     => $client->email,
-            'address'   => $client->address,
-            'createdAt' => $client->created_at?->toIso8601String(),
-            'updatedAt' => $client->updated_at?->toIso8601String(),
+            'id'              => $client->id,
+            'name'            => $client->name,
+            'company'         => $client->company,
+            'phone'           => $client->phone,
+            'email'           => $client->email,
+            'address'         => $client->address,
+            'totalQuotations' => (int) ($client->quotations_count ?? 0),
+            'createdAt'       => $client->created_at?->toIso8601String(),
+            'updatedAt'       => $client->updated_at?->toIso8601String(),
         ];
     }
 }
