@@ -255,7 +255,6 @@ class JobCardController extends Controller
         ];
 
         if ($type === 'Safari') {
-            $payload['vehicle_id'] = null;
             $payload['reason'] = null;
             $payload['client_details'] = null;
             $payload['location'] = null;
