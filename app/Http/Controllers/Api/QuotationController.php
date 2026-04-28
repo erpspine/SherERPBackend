@@ -45,6 +45,7 @@ class QuotationController extends Controller
 
         $quotation = DB::transaction(function () use ($validated): Quotation {
             $quotation = Quotation::create([
+                'quotation_number' => $this->generateQuotationNumber(),
                 'lead_id'      => $validated['leadId'] ?? null,
                 'client'       => $validated['client'],
                 'attention'    => $validated['attention'],
@@ -176,7 +177,7 @@ class QuotationController extends Controller
             'logoDataUri' => $this->resolveLogoDataUri(),
         ])->setPaper('a4', 'portrait');
 
-        $filename = 'quotation-' . $quotation->id . '.pdf';
+        $filename = 'quotation-' . ($quotation->quotation_number ?? $quotation->id) . '.pdf';
 
         return $pdf->download($filename);
     }
@@ -237,14 +238,32 @@ class QuotationController extends Controller
         ];
     }
 
+    private function generateQuotationNumber(): string
+    {
+        $year  = now()->format('Y');
+        $month = now()->format('m');
+        $prefix = 'QT-' . $year . '-' . $month . '-';
+
+        $last = Quotation::query()
+            ->where('quotation_number', 'like', $prefix . '%')
+            ->lockForUpdate()
+            ->orderByDesc('quotation_number')
+            ->value('quotation_number');
+
+        $seq = $last ? ((int) substr($last, strlen($prefix))) + 1 : 1;
+
+        return $prefix . str_pad((string) $seq, 4, '0', STR_PAD_LEFT);
+    }
+
     /**
      * @return array<string, mixed>
      */
     private function transformQuotation(Quotation $quotation): array
     {
         return [
-            'id'          => $quotation->id,
-            'leadId'      => $quotation->lead_id,
+            'id'              => $quotation->id,
+            'quotationNumber' => $quotation->quotation_number,
+            'leadId'          => $quotation->lead_id,
             'client'      => $quotation->client,
             'attention'   => $quotation->attention,
             'quoteDate'   => optional($quotation->quote_date)->format('Y-m-d'),
