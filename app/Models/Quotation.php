@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'lead_id',
     'client',
     'attention',
+    'group_name',
     'quote_date',
     'notes',
     'day_sections',

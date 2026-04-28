@@ -300,7 +300,9 @@
 <body>
     @php
         $currency = $company['currency'] ?? 'TZS';
-        $quoteNo = 'QT-' . now()->format('Y') . '-' . str_pad($quotation['id'], 4, '0', STR_PAD_LEFT);
+        $quoteNo =
+            $quotation['quotationNumber'] ??
+            'QT-' . now()->format('Y') . '-' . str_pad($quotation['id'], 4, '0', STR_PAD_LEFT);
     @endphp
 
     <div class="sheet">
@@ -337,6 +339,9 @@
                         <div class="to-block">
                             <div class="to-label">To</div>
                             <div class="to-name">{{ $quotation['client'] }}</div>
+                            @if (!empty($quotation['groupName']))
+                                <div>Group: {{ $quotation['groupName'] }}</div>
+                            @endif
                             @if (!empty($quotation['attention']))
                                 <div>Attn: {{ $quotation['attention'] }}</div>
                             @endif

@@ -97,7 +97,7 @@ class JobCardController extends Controller
     {
         $this->authorize('update', $jobCard);
 
-        $validated = $request->validate($this->rules(isUpdate: true));
+        $validated = $request->validate($this->rules(isUpdate: true, jobCard: $jobCard));
 
         $type = $validated['type'] ?? $jobCard->type;
         $leadId = array_key_exists('leadId', $validated) ? $validated['leadId'] : $jobCard->lead_id;
@@ -171,12 +171,25 @@ class JobCardController extends Controller
     /**
      * @return array<string, mixed>
      */
-    private function rules(bool $isUpdate = false): array
+    private function rules(bool $isUpdate = false, ?JobCard $jobCard = null): array
     {
         $required = $isUpdate ? 'sometimes' : 'required';
+        $requestedType = request()->input('type');
+        $effectiveType = is_string($requestedType) && $requestedType !== '' ? $requestedType : $jobCard?->type;
+
+        $leadIdRules = ['sometimes', 'nullable'];
+
+        if ($effectiveType === 'Safari') {
+            if (! $isUpdate) {
+                $leadIdRules[] = 'required';
+            }
+
+            $leadIdRules[] = 'integer';
+            $leadIdRules[] = 'exists:leads,id';
+        }
 
         return [
-            'leadId' => [$required, 'nullable', 'integer', 'exists:leads,id'],
+            'leadId' => $leadIdRules,
             'vehicleId' => [$required, 'nullable', 'integer', 'exists:vehicles,id'],
             'type' => [$required, 'string', Rule::in(self::TYPES)],
             'status' => ['sometimes', 'string', Rule::in(self::STATUSES)],
