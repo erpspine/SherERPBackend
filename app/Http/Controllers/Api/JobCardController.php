@@ -313,8 +313,6 @@ class JobCardController extends Controller
             $payload['adults'] = null;
             $payload['children'] = null;
             $payload['nationality'] = null;
-            $payload['safari_start_date'] = null;
-            $payload['safari_end_date'] = null;
         }
 
         return $payload;
