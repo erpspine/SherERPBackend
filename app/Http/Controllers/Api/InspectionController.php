@@ -4,11 +4,14 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Inspection;
+use App\Models\SafariAllocation;
 use App\Models\Setting;
+use App\Models\Vehicle;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\Response;
@@ -66,6 +69,10 @@ class InspectionController extends Controller
             'checklistType' => ['required', Rule::in(self::INSPECTION_TYPES)],
             'lead.id' => ['required', 'exists:leads,id'],
             'vehicle.id' => ['required', 'exists:vehicles,id'],
+            'odometer' => ['nullable', 'integer', 'min:0'],
+            'odometer_reading' => ['nullable', 'integer', 'min:0'],
+            'odometer_out' => ['nullable', 'integer', 'min:0'],
+            'odometer_in' => ['nullable', 'integer', 'min:0'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.checklist_id' => ['required', 'integer'],
             'items.*.checklist_title' => ['required', 'string'],
@@ -91,37 +98,47 @@ class InspectionController extends Controller
             ], 422);
         }
 
-        // Create inspection
-        $inspection = Inspection::create([
-            'user_id' => $request->user()->id,
-            'lead_id' => $validated['lead']['id'],
-            'vehicle_id' => $validated['vehicle']['id'],
-            'type' => $validated['type'],
-            'remarks' => $validated['remarks'] ?? null,
-        ]);
+        $odometerPayload = $this->resolveOdometerColumns(
+            validated: $validated,
+            type: (string) $validated['type'],
+        );
 
-        // Add inspection items
-        foreach ($validated['items'] as $index => $item) {
-            $inspection->items()->create([
-                'checklist_id' => $item['checklist_id'],
-                'checklist_title' => $item['checklist_title'],
-                'name' => $item['name'],
-                'text' => $item['text'],
-                'status' => $item['status'],
-                'issue' => $item['issue'] ?? null,
-                'sort_order' => $index,
+        $inspection = DB::transaction(function () use ($request, $validated, $odometerPayload): Inspection {
+            $inspection = Inspection::create([
+                'user_id' => $request->user()->id,
+                'lead_id' => $validated['lead']['id'],
+                'vehicle_id' => $validated['vehicle']['id'],
+                'type' => $validated['type'],
+                'odometer_out' => $odometerPayload['odometer_out'],
+                'odometer_in' => $odometerPayload['odometer_in'],
+                'remarks' => $validated['remarks'] ?? null,
             ]);
-        }
 
-        // Add inspection images
-        if (! empty($validated['images'])) {
-            foreach ($validated['images'] as $index => $imagePath) {
-                $inspection->images()->create([
-                    'path' => $this->normalizeInspectionImageInput($imagePath),
+            foreach ($validated['items'] as $index => $item) {
+                $inspection->items()->create([
+                    'checklist_id' => $item['checklist_id'],
+                    'checklist_title' => $item['checklist_title'],
+                    'name' => $item['name'],
+                    'text' => $item['text'],
+                    'status' => $item['status'],
+                    'issue' => $item['issue'] ?? null,
                     'sort_order' => $index,
                 ]);
             }
-        }
+
+            if (! empty($validated['images'])) {
+                foreach ($validated['images'] as $index => $imagePath) {
+                    $inspection->images()->create([
+                        'path' => $this->normalizeInspectionImageInput($imagePath),
+                        'sort_order' => $index,
+                    ]);
+                }
+            }
+
+            $this->syncVehicleAfterPostDeparture($inspection, $request);
+
+            return $inspection;
+        });
 
         $inspection->load('items', 'images', 'lead', 'vehicle');
 
@@ -145,6 +162,10 @@ class InspectionController extends Controller
         $validated = $request->validate([
             'type' => ['sometimes', Rule::in(self::INSPECTION_TYPES)],
             'remarks' => ['nullable', 'string'],
+            'odometer' => ['nullable', 'integer', 'min:0'],
+            'odometer_reading' => ['nullable', 'integer', 'min:0'],
+            'odometer_out' => ['nullable', 'integer', 'min:0'],
+            'odometer_in' => ['nullable', 'integer', 'min:0'],
         ]);
 
         $targetType = (string) ($validated['type'] ?? $inspection->type);
@@ -163,7 +184,21 @@ class InspectionController extends Controller
             ], 422);
         }
 
-        $inspection->update($validated);
+        $odometerPayload = $this->resolveOdometerColumns(
+            validated: $validated,
+            type: $targetType,
+            inspection: $inspection,
+        );
+
+        $updatePayload = array_merge($validated, $odometerPayload);
+
+        DB::transaction(function () use ($inspection, $updatePayload, $request): void {
+            $inspection->update($updatePayload);
+            $inspection->refresh();
+
+            $this->syncVehicleAfterPostDeparture($inspection, $request);
+        });
+
         $inspection->load('items', 'images', 'lead', 'vehicle');
 
         return response()->json([
@@ -308,6 +343,10 @@ class InspectionController extends Controller
                 'model' => $inspection->vehicle->model,
                 'plateNo' => $inspection->vehicle->plate_no,
             ],
+            'odometerOut' => $inspection->odometer_out,
+            'odometerIn' => $inspection->odometer_in,
+            'odometer_out' => $inspection->odometer_out,
+            'odometer_in' => $inspection->odometer_in,
             'items' => $inspection->items->map(fn($item): array => [
                 'id' => $item->id,
                 'checklistId' => $item->checklist_id,
@@ -501,5 +540,113 @@ class InspectionController extends Controller
         }
 
         return $query->first();
+    }
+
+    private function syncVehicleAfterPostDeparture(Inspection $inspection, Request $request): void
+    {
+        if ($inspection->type !== 'post_departure') {
+            return;
+        }
+
+        $vehicle = Vehicle::query()->find($inspection->vehicle_id);
+        if ($vehicle !== null) {
+            $payload = [
+                'status' => 'Available',
+            ];
+
+            $odometerReading = $this->extractPostDepartureOdometer($request);
+            if ($odometerReading !== null) {
+                $payload['mileage'] = $odometerReading;
+            }
+
+            $vehicle->update($payload);
+        }
+
+        $allocations = SafariAllocation::query()
+            ->where('lead_id', $inspection->lead_id)
+            ->where('vehicle_id', $inspection->vehicle_id)
+            ->whereIn('status', ['Assigned', 'Pending', 'In Progress'])
+            ->get();
+
+        foreach ($allocations as $allocation) {
+            $releaseNote = 'Auto-completed by post-departure inspection #' . $inspection->id . ' on ' . now()->toDateTimeString();
+            $existingNotes = trim((string) ($allocation->notes ?? ''));
+
+            $allocation->update([
+                'status' => 'Completed',
+                'notes' => $existingNotes === ''
+                    ? $releaseNote
+                    : $existingNotes . "\n" . $releaseNote,
+            ]);
+        }
+    }
+
+    private function extractPostDepartureOdometer(Request $request): ?int
+    {
+        foreach (['odometer_in', 'odometer_reading', 'odometer'] as $key) {
+            $raw = $request->input($key);
+
+            if ($raw === null) {
+                continue;
+            }
+
+            if (is_string($raw)) {
+                $raw = trim(str_replace([',', ' '], '', $raw));
+            }
+
+            if ($raw === '') {
+                continue;
+            }
+
+            if (! is_numeric($raw)) {
+                continue;
+            }
+
+            $value = (int) $raw;
+            if ($value >= 0) {
+                return $value;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string, mixed> $validated
+     * @return array<string, int|null>
+     */
+    private function resolveOdometerColumns(
+        array $validated,
+        string $type,
+        ?Inspection $inspection = null,
+    ): array {
+        $resolvedOut = array_key_exists('odometer_out', $validated)
+            ? $validated['odometer_out']
+            : $inspection?->odometer_out;
+        $resolvedIn = array_key_exists('odometer_in', $validated)
+            ? $validated['odometer_in']
+            : $inspection?->odometer_in;
+
+        $sharedReading = null;
+        if (array_key_exists('odometer_reading', $validated)) {
+            $sharedReading = $validated['odometer_reading'];
+        } elseif (array_key_exists('odometer', $validated)) {
+            $sharedReading = $validated['odometer'];
+        }
+
+        if ($sharedReading !== null) {
+            if ($type === 'pre_departure') {
+                $resolvedOut = $sharedReading;
+            }
+
+            if ($type === 'post_departure') {
+                $resolvedIn = $sharedReading;
+            }
+        }
+
+        return [
+            'odometer_out' => is_int($resolvedOut) ? $resolvedOut : (is_numeric($resolvedOut) ? (int) $resolvedOut : null),
+            'odometer_in' => is_int($resolvedIn) ? $resolvedIn : (is_numeric($resolvedIn) ? (int) $resolvedIn : null),
+        ];
     }
 }

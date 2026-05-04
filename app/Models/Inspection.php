@@ -13,7 +13,14 @@ class Inspection extends Model
         'lead_id',
         'vehicle_id',
         'type',
+        'odometer_out',
+        'odometer_in',
         'remarks',
+    ];
+
+    protected $casts = [
+        'odometer_out' => 'integer',
+        'odometer_in' => 'integer',
     ];
 
     public function user(): BelongsTo
