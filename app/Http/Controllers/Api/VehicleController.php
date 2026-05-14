@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\User;
 use App\Models\Vehicle;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -12,9 +13,27 @@ use Illuminate\Validation\Rule;
 
 class VehicleController extends Controller
 {
+    public function drivers(): JsonResponse
+    {
+        $drivers = User::query()
+            ->role('Driver')
+            ->where('status', 'Active')
+            ->orderBy('name')
+            ->get(['id', 'name', 'email']);
+
+        return response()->json([
+            'message' => 'Drivers fetched successfully.',
+            'drivers' => $drivers,
+        ]);
+    }
+
     public function index(): JsonResponse
     {
-        $vehicles = Vehicle::query()->latest('id')->get();
+        $vehicles = Vehicle::query()
+            ->with('assignedDriver:id,name,email')
+            ->orderBy('vehicle_no')
+            ->orderBy('id')
+            ->get();
 
         return response()->json([
             'message' => 'Vehicles fetched successfully.',
@@ -24,6 +43,8 @@ class VehicleController extends Controller
 
     public function show(Vehicle $vehicle): JsonResponse
     {
+        $vehicle->loadMissing('assignedDriver:id,name,email');
+
         return response()->json([
             'message' => 'Vehicle fetched successfully.',
             'vehicle' => $this->transformVehicle($vehicle),
@@ -33,6 +54,7 @@ class VehicleController extends Controller
     public function store(Request $request): JsonResponse
     {
         $this->normalizeMileageInput($request);
+        $this->normalizeAssignedDriverInput($request);
 
         $validated = $request->validate([
             'vehicleNo' => ['required', 'string', 'max:50', 'unique:vehicles,vehicle_no'],
@@ -58,6 +80,13 @@ class VehicleController extends Controller
             'vehiclePhoto' => ['nullable', 'file', 'image', 'max:5120'],
             'image' => ['nullable', 'file', 'image', 'max:5120'],
             'status' => ['sometimes', Rule::in(['Available', 'On Lease', 'Maintenance', 'Retired'])],
+            'assignedDriverId' => ['nullable', 'integer', 'exists:users,id'],
+            'leaseType' => ['sometimes', Rule::in(['Daily Lease', 'Short-Term Lease', 'Long-Term Lease'])],
+            'leaseStartDate' => ['nullable', 'date'],
+            'leaseEndDate' => ['nullable', 'date', 'after_or_equal:leaseStartDate'],
+            'leaseClientName' => ['nullable', 'string', 'max:150'],
+            'leaseMonthlyRate' => ['nullable', 'numeric', 'min:0'],
+            'leaseNotes' => ['nullable', 'string'],
         ]);
 
         $uploadedPhoto = $this->resolvePhotoUpload($request);
@@ -81,6 +110,7 @@ class VehicleController extends Controller
     public function update(Request $request, Vehicle $vehicle): JsonResponse
     {
         $this->normalizeMileageInput($request);
+        $this->normalizeAssignedDriverInput($request);
 
 
 
@@ -108,6 +138,13 @@ class VehicleController extends Controller
             'vehiclePhoto' => ['nullable', 'file', 'image', 'max:5120'],
             'image' => ['nullable', 'file', 'image', 'max:5120'],
             'status' => ['sometimes', Rule::in(['Available', 'On Lease', 'Maintenance', 'Retired'])],
+            'assignedDriverId' => ['nullable', 'integer', 'exists:users,id'],
+            'leaseType' => ['sometimes', Rule::in(['Daily Lease', 'Short-Term Lease', 'Long-Term Lease'])],
+            'leaseStartDate' => ['nullable', 'date'],
+            'leaseEndDate' => ['nullable', 'date', 'after_or_equal:leaseStartDate'],
+            'leaseClientName' => ['nullable', 'string', 'max:150'],
+            'leaseMonthlyRate' => ['nullable', 'numeric', 'min:0'],
+            'leaseNotes' => ['nullable', 'string'],
         ]);
 
         $uploadedPhoto = $this->resolvePhotoUpload($request);
@@ -162,6 +199,13 @@ class VehicleController extends Controller
             'specs' => 'specs',
             'photo' => 'photo',
             'status' => 'status',
+            'assignedDriverId' => 'assigned_driver_id',
+            'leaseType' => 'lease_type',
+            'leaseStartDate' => 'lease_start_date',
+            'leaseEndDate' => 'lease_end_date',
+            'leaseClientName' => 'lease_client_name',
+            'leaseMonthlyRate' => 'lease_monthly_rate',
+            'leaseNotes' => 'lease_notes',
         ];
 
         $payload = [];
@@ -197,6 +241,18 @@ class VehicleController extends Controller
         $request->merge([
             'mileage' => $rawMileage,
         ]);
+    }
+
+    private function normalizeAssignedDriverInput(Request $request): void
+    {
+        if (! $request->has('assignedDriverId')) {
+            return;
+        }
+
+        $value = $request->input('assignedDriverId');
+        if ($value === '' || $value === null) {
+            $request->merge(['assignedDriverId' => null]);
+        }
     }
 
     private function resolvePhotoUpload(Request $request): ?UploadedFile
@@ -261,8 +317,51 @@ class VehicleController extends Controller
                 ? Storage::url($vehicle->photo)
                 : null,
             'status' => $vehicle->status,
+            'assigned_driver_id' => $vehicle->assigned_driver_id,
+            'assignedDriverId' => $vehicle->assigned_driver_id,
+            'assigned_driver' => $vehicle->assignedDriver
+                ? [
+                    'id' => $vehicle->assignedDriver->id,
+                    'name' => $vehicle->assignedDriver->name,
+                    'email' => $vehicle->assignedDriver->email,
+                ]
+                : null,
+            'assignedDriver' => $vehicle->assignedDriver
+                ? [
+                    'id' => $vehicle->assignedDriver->id,
+                    'name' => $vehicle->assignedDriver->name,
+                    'email' => $vehicle->assignedDriver->email,
+                ]
+                : null,
+            'lease_type' => $vehicle->lease_type,
+            'lease_start_date' => $this->formatDateOnly($vehicle->lease_start_date),
+            'lease_end_date' => $this->formatDateOnly($vehicle->lease_end_date),
+            'lease_client_name' => $vehicle->lease_client_name,
+            'lease_monthly_rate' => $vehicle->lease_monthly_rate,
+            'lease_notes' => $vehicle->lease_notes,
+            'leaseType' => $vehicle->lease_type,
+            'leaseStartDate' => $this->formatDateOnly($vehicle->lease_start_date),
+            'leaseEndDate' => $this->formatDateOnly($vehicle->lease_end_date),
+            'leaseClientName' => $vehicle->lease_client_name,
+            'leaseMonthlyRate' => $vehicle->lease_monthly_rate,
+            'leaseNotes' => $vehicle->lease_notes,
             'createdAt' => $vehicle->created_at?->toISOString(),
             'updatedAt' => $vehicle->updated_at?->toISOString(),
         ];
+    }
+
+    private function formatDateOnly(mixed $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if ($value instanceof \DateTimeInterface) {
+            return $value->format('Y-m-d');
+        }
+
+        $timestamp = strtotime((string) $value);
+
+        return $timestamp === false ? null : date('Y-m-d', $timestamp);
     }
 }

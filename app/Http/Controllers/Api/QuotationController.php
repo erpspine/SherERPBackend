@@ -9,10 +9,12 @@ use App\Models\Quotation;
 use App\Models\Setting;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class QuotationController extends Controller
 {
@@ -163,15 +165,7 @@ class QuotationController extends Controller
     {
         $quotation->load('lineItems');
 
-        $company = [
-            'name' => Setting::get('company_name', config('app.name')),
-            'email' => Setting::get('company_email'),
-            'phone' => Setting::get('company_phone'),
-            'address' => Setting::get('company_address'),
-            'tax_registration_number' => Setting::get('tax_registration_number'),
-            'currency' => Setting::get('default_currency', 'TZS'),
-            'vat' => Setting::get('default_vat', '0'),
-        ];
+        $company = $this->getCompanyPayload();
 
         $pdf = Pdf::loadView('quotations.pdf', [
             'quotation' => $this->transformQuotation($quotation),
@@ -182,6 +176,76 @@ class QuotationController extends Controller
         $filename = 'quotation-' . ($quotation->quotation_number ?? $quotation->id) . '.pdf';
 
         return $pdf->download($filename);
+    }
+
+    public function exportPdf(Request $request): Response
+    {
+        $rows = $this->buildExportRows($request);
+        $company = $this->getCompanyPayload();
+
+        $pdf = Pdf::loadView('quotations.list-pdf', [
+            'rows' => $rows,
+            'company' => $company,
+            'logoDataUri' => $this->resolveLogoDataUri(),
+            'generatedAt' => now()->format('Y-m-d H:i:s'),
+            'statusFilter' => (string) $request->query('status', 'All'),
+            'searchTerm' => trim((string) $request->query('search', '')),
+        ])->setPaper('a4', 'landscape');
+
+        return $pdf->download('quotations-report.pdf');
+    }
+
+    public function exportExcel(Request $request): StreamedResponse
+    {
+        $rows = $this->buildExportRows($request);
+        $currency = Setting::get('default_currency', 'TZS');
+
+        return response()->streamDownload(function () use ($rows, $currency): void {
+            $output = fopen('php://output', 'w');
+            if ($output === false) {
+                return;
+            }
+
+            fwrite($output, "\xEF\xBB\xBF");
+
+            fputcsv($output, [
+                'Quote #',
+                'Quote Date',
+                'Client',
+                'Attention',
+                'Group Name',
+                'Service Summary',
+                'Status',
+                'Sent By',
+                'Sent At',
+                'Currency',
+                'Subtotal',
+                'Tax',
+                'Total',
+            ]);
+
+            foreach ($rows as $row) {
+                fputcsv($output, [
+                    $row['quotationNumber'],
+                    $row['quoteDate'],
+                    $row['client'],
+                    $row['attention'],
+                    $row['groupName'],
+                    $row['serviceSummary'],
+                    $row['status'],
+                    $row['sentBy'],
+                    $row['sentAt'],
+                    $currency,
+                    $row['subtotal'],
+                    $row['tax'],
+                    $row['total'],
+                ]);
+            }
+
+            fclose($output);
+        }, 'quotations-report.csv', [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+        ]);
     }
 
     /**
@@ -263,36 +327,41 @@ class QuotationController extends Controller
      */
     private function transformQuotation(Quotation $quotation): array
     {
+        $lineItems = $quotation->lineItems->map(fn($item): array => [
+            'id'             => $item->id,
+            'dayTitle'       => $item->day_title,
+            'dayDescription' => $item->day_description,
+            'item'           => $item->item,
+            'description'    => $item->description,
+            'unit'           => $item->unit,
+            'qty'            => (float) $item->qty,
+            'rate'           => (float) $item->rate,
+            'total'          => (float) $item->total,
+        ])->values()->all();
+
+        $serviceSummary = $this->extractServiceSummary(['lineItems' => $lineItems]);
+
         return [
             'id'              => $quotation->id,
             'quotationNumber' => $quotation->quotation_number,
             'leadId'          => $quotation->lead_id,
-            'client'      => $quotation->client,
-            'attention'   => $quotation->attention,
-            'groupName'   => $quotation->group_name,
-            'quoteDate'   => optional($quotation->quote_date)->format('Y-m-d'),
-            'notes'       => $quotation->notes,
-            'daySections' => $quotation->day_sections ?? [],
-            'lineItems'   => $quotation->lineItems->map(fn($item): array => [
-                'id'             => $item->id,
-                'dayTitle'       => $item->day_title,
-                'dayDescription' => $item->day_description,
-                'item'           => $item->item,
-                'description'    => $item->description,
-                'unit'           => $item->unit,
-                'qty'            => (float) $item->qty,
-                'rate'           => (float) $item->rate,
-                'total'          => (float) $item->total,
-            ])->values(),
-            'subtotal'    => (float) $quotation->subtotal,
-            'tax'         => (float) $quotation->tax,
-            'total'       => (float) $quotation->total,
-            'status'      => $quotation->status,
-            'sentById'    => $quotation->sent_by_id,
-            'sentBy'      => $quotation->sentBy?->name,
-            'sentAt'      => $quotation->sent_at?->toISOString(),
-            'createdAt'   => $quotation->created_at?->toISOString(),
-            'updatedAt'   => $quotation->updated_at?->toISOString(),
+            'client'          => $quotation->client,
+            'attention'       => $quotation->attention,
+            'groupName'       => $quotation->group_name,
+            'quoteDate'       => optional($quotation->quote_date)->format('Y-m-d'),
+            'notes'           => $quotation->notes,
+            'daySections'     => $quotation->day_sections ?? [],
+            'lineItems'       => $lineItems,
+            'serviceSummary'  => $serviceSummary,
+            'subtotal'        => (float) $quotation->subtotal,
+            'tax'             => (float) $quotation->tax,
+            'total'           => (float) $quotation->total,
+            'status'          => $quotation->status,
+            'sentById'        => $quotation->sent_by_id,
+            'sentBy'          => $quotation->sentBy?->name,
+            'sentAt'          => $quotation->sent_at?->toISOString(),
+            'createdAt'       => $quotation->created_at?->toISOString(),
+            'updatedAt'       => $quotation->updated_at?->toISOString(),
         ];
     }
 
@@ -314,5 +383,104 @@ class QuotationController extends Controller
         };
 
         return 'data:' . $mime . ';base64,' . base64_encode($contents);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function getCompanyPayload(): array
+    {
+        return [
+            'name' => Setting::get('company_name', config('app.name')),
+            'email' => Setting::get('company_email'),
+            'phone' => Setting::get('company_phone'),
+            'address' => Setting::get('company_address'),
+            'tax_registration_number' => Setting::get('tax_registration_number'),
+            'currency' => Setting::get('default_currency', 'TZS'),
+            'vat' => Setting::get('default_vat', '0'),
+        ];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function buildExportRows(Request $request): array
+    {
+        $status = (string) $request->query('status', 'All');
+        $search = trim((string) $request->query('search', ''));
+        $currency = Setting::get('default_currency', 'TZS');
+
+        return $this->filteredQuotationCollection($status, $search)
+            ->map(function (Quotation $quotation) use ($currency): array {
+                $transformed = $this->transformQuotation($quotation);
+
+                return [
+                    'quotationNumber' => (string) ($transformed['quotationNumber'] ?? ('QT-' . $quotation->id)),
+                    'quoteDate' => (string) ($transformed['quoteDate'] ?? '-'),
+                    'client' => (string) ($transformed['client'] ?? '-'),
+                    'attention' => (string) ($transformed['attention'] ?? '-'),
+                    'groupName' => (string) (($transformed['groupName'] ?? '') ?: '-'),
+                    'serviceSummary' => $this->extractServiceSummary($transformed),
+                    'status' => (string) ($transformed['status'] ?? '-'),
+                    'sentBy' => (string) (($transformed['sentBy'] ?? '') ?: '-'),
+                    'sentAt' => (string) (($transformed['sentAt'] ?? '') ?: '-'),
+                    'subtotal' => (float) ($transformed['subtotal'] ?? 0),
+                    'tax' => (float) ($transformed['tax'] ?? 0),
+                    'total' => (float) ($transformed['total'] ?? 0),
+                    'currency' => $currency,
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    private function filteredQuotationCollection(string $status, string $search): Collection
+    {
+        $quotations = Quotation::query()
+            ->with(['lineItems', 'sentBy'])
+            ->latest('id')
+            ->get();
+
+        if ($status !== 'All') {
+            $quotations = $quotations->filter(fn(Quotation $quotation): bool => $quotation->status === $status);
+        }
+
+        if ($search === '') {
+            return $quotations->values();
+        }
+
+        $query = mb_strtolower($search);
+
+        return $quotations->filter(function (Quotation $quotation) use ($query): bool {
+            $transformed = $this->transformQuotation($quotation);
+            $haystack = [
+                (string) ($transformed['quotationNumber'] ?? ''),
+                (string) ($transformed['client'] ?? ''),
+                (string) ($transformed['groupName'] ?? ''),
+                $this->extractServiceSummary($transformed),
+            ];
+
+            return str_contains(mb_strtolower(implode(' ', $haystack)), $query);
+        })->values();
+    }
+
+    /**
+     * @param array<string, mixed> $quotation
+     */
+    private function extractServiceSummary(array $quotation): string
+    {
+        $lineItems = $quotation['lineItems'] ?? [];
+        if (! is_array($lineItems) || $lineItems === []) {
+            return '-';
+        }
+
+        $items = collect($lineItems)
+            ->map(fn($item) => is_array($item) ? trim((string) ($item['item'] ?? '')) : '')
+            ->filter()
+            ->unique()
+            ->take(3)
+            ->values();
+
+        return $items->isEmpty() ? '-' : $items->implode(', ');
     }
 }

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Mail\UserCreatedMail;
 use App\Models\User;
+use Carbon\Carbon;
 use Illuminate\Auth\Passwords\PasswordBroker;
 use Illuminate\Auth\Events\PasswordReset;
 use Illuminate\Http\JsonResponse;
@@ -25,7 +26,20 @@ class UserController extends Controller
         $users = User::query()
             ->with('roles:id,name')
             ->latest('id')
-            ->get(['id', 'name', 'email', 'phone', 'role', 'status', 'receive_notifications', 'last_login_at', 'created_at']);
+            ->get([
+                'id',
+                'name',
+                'email',
+                'phone',
+                'languages_spoken',
+                'work_experience',
+                'driving_started_at',
+                'role',
+                'status',
+                'receive_notifications',
+                'last_login_at',
+                'created_at',
+            ]);
 
         return response()->json([
             'message' => 'Users fetched successfully.',
@@ -187,6 +201,15 @@ class UserController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255', 'unique:users,email'],
             'phone' => ['required', 'string', 'max:30'],
+            'languages_spoken' => ['nullable', function (string $attribute, mixed $value, \Closure $fail): void {
+                if (is_string($value) || is_array($value) || $value === null) {
+                    return;
+                }
+
+                $fail('Languages spoken must be a string or an array of strings.');
+            }],
+            'languages_spoken.*' => ['nullable', 'string', 'max:50'],
+            'driving_started_at' => ['nullable', 'date', 'before_or_equal:today'],
             'role' => ['nullable', 'string', Rule::in($this->availableRoles())],
             'roles' => ['nullable', 'array', 'min:1'],
             'roles.*' => ['string', Rule::in($this->availableRoles())],
@@ -196,6 +219,7 @@ class UserController extends Controller
 
         $roles = $this->extractRoleNames($validated, true);
         $primaryRole = $roles[0];
+        $driverProfile = $this->extractDriverProfileFields($validated, $primaryRole, true);
 
         $plainPassword = Str::random(12);
 
@@ -206,6 +230,9 @@ class UserController extends Controller
                 'name' => $validated['name'],
                 'email' => $validated['email'],
                 'phone' => $validated['phone'],
+                'languages_spoken' => $driverProfile['languages_spoken'],
+                'work_experience' => $driverProfile['work_experience'],
+                'driving_started_at' => $driverProfile['driving_started_at'],
                 'role' => $primaryRole,
                 'status' => $validated['status'],
                 'receive_notifications' => (bool) ($validated['receive_notifications'] ?? false),
@@ -239,6 +266,15 @@ class UserController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')->ignore($user->id)],
             'phone' => ['required', 'string', 'max:30'],
+            'languages_spoken' => ['nullable', function (string $attribute, mixed $value, \Closure $fail): void {
+                if (is_string($value) || is_array($value) || $value === null) {
+                    return;
+                }
+
+                $fail('Languages spoken must be a string or an array of strings.');
+            }],
+            'languages_spoken.*' => ['nullable', 'string', 'max:50'],
+            'driving_started_at' => ['nullable', 'date', 'before_or_equal:today'],
             'role' => ['nullable', 'string', Rule::in($this->availableRoles())],
             'roles' => ['nullable', 'array', 'min:1'],
             'roles.*' => ['string', Rule::in($this->availableRoles())],
@@ -247,11 +283,16 @@ class UserController extends Controller
         ]);
 
         $roles = $this->extractRoleNames($validated, false, $user);
+        $primaryRole = $roles[0] ?? $user->role;
+        $driverProfile = $this->extractDriverProfileFields($validated, $primaryRole, false, $user);
         $user->update([
             'name' => $validated['name'],
             'email' => $validated['email'],
             'phone' => $validated['phone'],
-            'role' => $roles[0] ?? $user->role,
+            'languages_spoken' => $driverProfile['languages_spoken'],
+            'work_experience' => $driverProfile['work_experience'],
+            'driving_started_at' => $driverProfile['driving_started_at'],
+            'role' => $primaryRole,
             'status' => $validated['status'],
             'receive_notifications' => (bool) ($validated['receive_notifications'] ?? false),
         ]);
@@ -340,12 +381,23 @@ class UserController extends Controller
     {
         $user->loadMissing('roles:id,name');
         $roles = $user->roles->pluck('name')->values();
+        $languages = $this->explodeLanguages($user->languages_spoken);
+        $computedExperience = $this->calculateExperienceFromStartDate($user->driving_started_at?->toDateString());
+        $experience = $computedExperience ?? $user->work_experience;
 
         $payload = [
             'id' => $user->id,
             'name' => $user->name,
             'email' => $user->email,
             'phone' => $user->phone,
+            'languages_spoken' => $user->languages_spoken,
+            'languages_spoken_list' => $languages,
+            'driving_started_at' => $user->driving_started_at?->toDateString(),
+            'work_experience' => $experience,
+            'languagesSpoken' => $user->languages_spoken,
+            'languagesSpokenList' => $languages,
+            'drivingStartedAt' => $user->driving_started_at?->toDateString(),
+            'workExperience' => $experience,
             'role' => $user->role ?? $roles->first(),
             'roles' => $roles,
             'status' => $user->status,
@@ -359,6 +411,131 @@ class UserController extends Controller
         }
 
         return $payload;
+    }
+
+    /**
+     * @param array<string, mixed> $validated
+     * @return array{languages_spoken: ?string, work_experience: null, driving_started_at: ?string}
+     */
+    private function extractDriverProfileFields(
+        array $validated,
+        ?string $role,
+        bool $required,
+        ?User $user = null,
+    ): array {
+        $languages = array_key_exists('languages_spoken', $validated)
+            ? $this->normalizeLanguagesForStorage($validated['languages_spoken'])
+            : ($user?->languages_spoken ?? null);
+        $drivingStartedAt = isset($validated['driving_started_at'])
+            ? (string) $validated['driving_started_at']
+            : ($user?->driving_started_at?->toDateString() ?? null);
+
+        $languages = $languages === '' ? null : $languages;
+        $drivingStartedAt = $drivingStartedAt === '' ? null : $drivingStartedAt;
+
+        if ($role === 'Driver') {
+            if ($required && ($languages === null || $drivingStartedAt === null)) {
+                throw ValidationException::withMessages([
+                    'languages_spoken' => ['Languages spoken is required for drivers.'],
+                    'driving_started_at' => ['Driving start date is required for drivers.'],
+                ]);
+            }
+
+            return [
+                'languages_spoken' => $languages,
+                'work_experience' => null,
+                'driving_started_at' => $drivingStartedAt,
+            ];
+        }
+
+        return [
+            'languages_spoken' => null,
+            'work_experience' => null,
+            'driving_started_at' => null,
+        ];
+    }
+
+    private function calculateExperienceFromStartDate(?string $startDate): ?string
+    {
+        if ($startDate === null || trim($startDate) === '') {
+            return null;
+        }
+
+        try {
+            $started = Carbon::parse($startDate)->startOfDay();
+        } catch (\Throwable) {
+            return null;
+        }
+
+        $today = Carbon::today();
+        if ($started->greaterThan($today)) {
+            return null;
+        }
+
+        $years = $started->diffInYears($today);
+        $months = $started->copy()->addYears($years)->diffInMonths($today);
+
+        if ($years <= 0 && $months <= 0) {
+            return 'Less than 1 month';
+        }
+
+        $parts = [];
+        if ($years > 0) {
+            $parts[] = $years === 1 ? '1 year' : $years.' years';
+        }
+        if ($months > 0) {
+            $parts[] = $months === 1 ? '1 month' : $months.' months';
+        }
+
+        return implode(', ', $parts);
+    }
+
+    /**
+     * @param  mixed  $value
+     */
+    private function normalizeLanguagesForStorage(mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $items = is_array($value) ? $value : explode(',', (string) $value);
+
+        $languages = collect($items)
+            ->map(fn (mixed $item): string => trim((string) $item))
+            ->filter(fn (string $item): bool => $item !== '')
+            ->unique()
+            ->values();
+
+        if ($languages->isEmpty()) {
+            return null;
+        }
+
+        $normalized = $languages->implode(', ');
+
+        if (strlen($normalized) > 255) {
+            throw ValidationException::withMessages([
+                'languages_spoken' => ['Languages spoken exceeds the maximum length of 255 characters.'],
+            ]);
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function explodeLanguages(?string $value): array
+    {
+        if ($value === null || trim($value) === '') {
+            return [];
+        }
+
+        return collect(explode(',', $value))
+            ->map(fn (string $item): string => trim($item))
+            ->filter(fn (string $item): bool => $item !== '')
+            ->values()
+            ->all();
     }
 
     /**

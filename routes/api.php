@@ -13,6 +13,7 @@ use App\Http\Controllers\Api\InvoiceController;
 use App\Http\Controllers\Api\VehicleController;
 use App\Http\Controllers\Api\VehicleServiceController;
 use App\Http\Controllers\Api\VehicleHistoryController;
+use App\Http\Controllers\Api\VehicleAvailabilityExportController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\JobCardController;
 use App\Http\Controllers\Api\SafariAllocationController;
@@ -91,6 +92,8 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('/lead-api-keys/{apiKey}/regenerate', [LeadApiKeyController::class, 'regenerate'])->middleware('permission:settings.update');
 
     Route::get('/quotations', [QuotationController::class, 'index'])->middleware('permission:quotations.view');
+    Route::get('/quotations/export/pdf', [QuotationController::class, 'exportPdf'])->middleware('permission:quotations.view');
+    Route::get('/quotations/export/excel', [QuotationController::class, 'exportExcel'])->middleware('permission:quotations.view');
     Route::get('/quotations/{quotation}', [QuotationController::class, 'show'])->middleware('permission:quotations.view');
     Route::get('/quotations/{quotation}/pdf', [QuotationController::class, 'pdf'])->middleware('permission:quotations.view');
     Route::post('/quotations/{quotation}/convert-to-pi', [ProformaInvoiceController::class, 'convertFromQuotation'])->middleware('permission:quotations.update');
@@ -156,8 +159,11 @@ Route::middleware('auth:sanctum')->group(function (): void {
 
     // Vehicles
     Route::get('/vehicles', [VehicleController::class, 'index'])->middleware('permission:vehicles.view');
+    Route::get('/vehicles/drivers', [VehicleController::class, 'drivers'])->middleware('permission:vehicles.view');
     Route::get('/vehicles/{vehicle}', [VehicleController::class, 'show'])->middleware('permission:vehicles.view');
     Route::get('/vehicles/{vehicle}/history', [VehicleHistoryController::class, 'show'])->middleware('permission:vehicles.view');
+    Route::get('/vehicle-availability/export/pdf', [VehicleAvailabilityExportController::class, 'pdf'])->middleware('permission:vehicles.view');
+    Route::get('/vehicle-availability/export/excel', [VehicleAvailabilityExportController::class, 'excel'])->middleware('permission:vehicles.view');
     Route::post('/vehicles', [VehicleController::class, 'store'])->middleware('permission:vehicles.create');
     Route::match(['put', 'patch', 'post'], '/vehicles/{vehicle}', [VehicleController::class, 'update'])->middleware('permission:vehicles.update');
     Route::delete('/vehicles/{vehicle}', [VehicleController::class, 'destroy'])->middleware('permission:vehicles.delete');
