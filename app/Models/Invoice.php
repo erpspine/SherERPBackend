@@ -17,6 +17,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'total',
     'status',
     'notes',
+    'attachment_path',
+    'attachment_name',
 ])]
 class Invoice extends Model
 {

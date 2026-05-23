@@ -16,6 +16,9 @@ class RoleAndPermissionSeeder extends Seeder
 
         $permissions = config('access.permissions', []);
         $roles = config('access.roles', []);
+        $normalizedRoles = collect(array_keys($roles))
+            ->mapWithKeys(fn(string $roleName): array => [mb_strtolower($roleName) => $roleName])
+            ->all();
 
         foreach ($permissions as $permission) {
             Permission::findOrCreate($permission, 'web');
@@ -30,10 +33,19 @@ class RoleAndPermissionSeeder extends Seeder
             ->whereNotNull('role')
             ->where('role', '!=', '')
             ->get()
-            ->each(function (User $user) use ($roles): void {
-                if (array_key_exists($user->role, $roles)) {
-                    $user->syncRoles([$user->role]);
+            ->each(function (User $user) use ($normalizedRoles): void {
+                $resolvedRole = $normalizedRoles[mb_strtolower((string) $user->role)] ?? null;
+
+                if ($resolvedRole === null) {
+                    return;
                 }
+
+                if ($user->role !== $resolvedRole) {
+                    $user->role = $resolvedRole;
+                    $user->save();
+                }
+
+                $user->syncRoles([$resolvedRole]);
             });
 
         app(PermissionRegistrar::class)->forgetCachedPermissions();

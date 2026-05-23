@@ -126,7 +126,8 @@ class DashboardController extends Controller
 
                 return [
                     'id' => $quotation->id,
-                    'quoteNo' => 'QT-' . (string) now()->year . '-' . str_pad((string) $quotation->id, 4, '0', STR_PAD_LEFT),
+                    'quoteNo' => $quotation->quotation_number
+                        ?: 'QT-' . ($quotation->quote_date?->format('Y-m') ?: $quotation->created_at?->format('Y-m') ?: now()->format('Y-m')) . '-' . str_pad((string) $quotation->id, 3, '0', STR_PAD_LEFT),
                     'client' => $quotation->client,
                     'serviceSummary' => $summary,
                     'amount' => $currency . ' ' . number_format((float) $quotation->total, 2),

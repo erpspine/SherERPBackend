@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use Barryvdh\DomPDF\Facade\Pdf;
 use App\Http\Controllers\Controller;
 use App\Models\JobCard;
+use App\Models\Lead;
 use App\Models\SafariAllocation;
 use App\Models\Setting;
 use Illuminate\Http\JsonResponse;
@@ -15,7 +16,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 class JobCardController extends Controller
 {
-    private const TYPES = ['Safari', 'Test Drive', 'Service', 'Client Viewing', 'Others'];
+    private const TYPES = ['Safari', 'Safari - Daily', 'Safari - Monthly', 'Safari - Yearly', 'Test Drive', 'Service', 'Client Viewing', 'Others'];
 
     private const STATUSES = ['Open', 'Closed'];
 
@@ -62,16 +63,16 @@ class JobCardController extends Controller
     {
         $this->authorize('create', JobCard::class);
 
-        $validated = $request->validate($this->rules());
+        $validated = $request->validate($this->rules($request));
 
         $type = $validated['type'];
-        if ($type === 'Safari' && empty($validated['leadId'])) {
+        if ($this->isSafariType($type) && empty($validated['leadId'])) {
             return response()->json([
                 'message' => 'leadId is required for Safari job cards.',
             ], 422);
         }
 
-        if ($type !== 'Safari' && empty($validated['vehicleId'])) {
+        if (! $this->isSafariType($type) && empty($validated['vehicleId'])) {
             return response()->json([
                 'message' => 'vehicleId is required for non-Safari job cards.',
             ], 422);
@@ -97,19 +98,19 @@ class JobCardController extends Controller
     {
         $this->authorize('update', $jobCard);
 
-        $validated = $request->validate($this->rules(isUpdate: true, jobCard: $jobCard));
+        $validated = $request->validate($this->rules($request, isUpdate: true, jobCard: $jobCard));
 
         $type = $validated['type'] ?? $jobCard->type;
         $leadId = array_key_exists('leadId', $validated) ? $validated['leadId'] : $jobCard->lead_id;
         $vehicleId = array_key_exists('vehicleId', $validated) ? $validated['vehicleId'] : $jobCard->vehicle_id;
 
-        if ($type === 'Safari' && empty($leadId)) {
+        if ($this->isSafariType($type) && empty($leadId)) {
             return response()->json([
                 'message' => 'leadId is required for Safari job cards.',
             ], 422);
         }
 
-        if ($type !== 'Safari' && empty($vehicleId)) {
+        if (! $this->isSafariType($type) && empty($vehicleId)) {
             return response()->json([
                 'message' => 'vehicleId is required for non-Safari job cards.',
             ], 422);
@@ -152,8 +153,36 @@ class JobCardController extends Controller
             'tax_registration_number' => Setting::get('tax_registration_number'),
         ];
 
+        $transformedJobCard = $this->transform($jobCard);
+
+        if ($this->isSafariType($jobCard->type) && $jobCard->lead_id) {
+            $allocations = SafariAllocation::query()
+                ->with(['vehicle', 'driver'])
+                ->where('lead_id', $jobCard->lead_id)
+                ->orderBy('start_date')
+                ->orderBy('id')
+                ->get();
+
+            $transformedJobCard['allocatedVehicles'] = $allocations
+                ->map(function (SafariAllocation $allocation): array {
+                    return [
+                        'vehicleNo' => (string) ($allocation->vehicle?->vehicle_no ?? ''),
+                        'plateNo' => (string) ($allocation->vehicle?->plate_no ?? ''),
+                        'driverName' => (string) ($allocation->driver?->name ?? ''),
+                    ];
+                })
+                ->filter(fn(array $item): bool => trim($item['vehicleNo']) !== '' || trim($item['plateNo']) !== '' || trim($item['driverName']) !== '')
+                ->unique(fn(array $item): string => implode('|', [
+                    strtoupper(trim($item['vehicleNo'])),
+                    strtoupper(trim($item['plateNo'])),
+                    strtoupper(trim($item['driverName'])),
+                ]))
+                ->values()
+                ->all();
+        }
+
         $pdf = Pdf::loadView('job-cards.pdf', [
-            'jobCard' => $this->transform($jobCard),
+            'jobCard' => $transformedJobCard,
             'company' => $company,
             'logoDataUri' => $this->resolveLogoDataUri(),
         ])->setPaper('a4', 'portrait');
@@ -171,15 +200,15 @@ class JobCardController extends Controller
     /**
      * @return array<string, mixed>
      */
-    private function rules(bool $isUpdate = false, ?JobCard $jobCard = null): array
+    private function rules(Request $request, bool $isUpdate = false, ?JobCard $jobCard = null): array
     {
         $required = $isUpdate ? 'sometimes' : 'required';
-        $requestedType = request()->input('type');
+        $requestedType = $request->input('type');
         $effectiveType = is_string($requestedType) && $requestedType !== '' ? $requestedType : $jobCard?->type;
 
         $leadIdRules = ['sometimes', 'nullable'];
 
-        if ($effectiveType === 'Safari') {
+        if ($this->isSafariType($effectiveType)) {
             if (! $isUpdate) {
                 $leadIdRules[] = 'required';
             }
@@ -198,6 +227,9 @@ class JobCardController extends Controller
             'timeOut' => ['sometimes', 'nullable', 'date_format:H:i'],
             'timeIn' => ['sometimes', 'nullable', 'date_format:H:i'],
             'routeSummary' => ['sometimes', 'nullable', 'string', 'max:500'],
+            'routeItinerary' => ['sometimes', 'nullable', 'array'],
+            'routeItinerary.*.date' => ['sometimes', 'nullable', 'string', 'max:100'],
+            'routeItinerary.*.dayDescription' => ['sometimes', 'nullable', 'string', 'max:2000'],
             'additionalDetails' => ['sometimes', 'nullable', 'string'],
             'numberOfDays' => ['sometimes', 'nullable', 'integer', 'min:1', 'max:365'],
             'pickupLocation' => ['sometimes', 'nullable', 'string', 'max:255'],
@@ -267,7 +299,16 @@ class JobCardController extends Controller
             'guide_language' => $jobCard?->guide_language,
         ];
 
-        if ($type === 'Safari') {
+        if ($this->isSafariType($type)) {
+            $manualRouteItinerary = $this->normalizeRouteItinerary($validated['routeItinerary'] ?? null);
+
+            $payload['route_itinerary'] = ! empty($manualRouteItinerary)
+                ? $manualRouteItinerary
+                : $this->resolveSafariItinerary(
+                    $payload['lead_id'] ? (int) $payload['lead_id'] : null,
+                    $jobCard
+                );
+
             $payload['reason'] = null;
             $payload['client_details'] = null;
             $payload['location'] = null;
@@ -318,6 +359,11 @@ class JobCardController extends Controller
         return $payload;
     }
 
+    private function isSafariType(?string $type): bool
+    {
+        return is_string($type) && str_starts_with(strtolower($type), 'safari');
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -325,6 +371,11 @@ class JobCardController extends Controller
     {
         $timeOut = $jobCard->time_out ? date('H:i', strtotime((string) $jobCard->time_out)) : null;
         $timeIn = $jobCard->time_in ? date('H:i', strtotime((string) $jobCard->time_in)) : null;
+        $routeItinerary = $this->normalizeRouteItinerary($jobCard->route_itinerary);
+
+        if (empty($routeItinerary) && $this->isSafariType($jobCard->type)) {
+            $routeItinerary = $this->resolveSafariItinerary($jobCard->lead_id ? (int) $jobCard->lead_id : null, $jobCard);
+        }
 
         return [
             'id' => $jobCard->id,
@@ -372,10 +423,81 @@ class JobCardController extends Controller
                 'children' => $jobCard->children,
             ],
             'guideLanguage' => $jobCard->guide_language,
-            'routeItinerary' => $jobCard->route_itinerary ?? [],
+            'routeItinerary' => $routeItinerary,
             'createdAt' => $jobCard->created_at?->toISOString(),
             'updatedAt' => $jobCard->updated_at?->toISOString(),
         ];
+    }
+
+    /**
+     * @return array<int, array<string, string>>
+     */
+    private function resolveSafariItinerary(?int $leadId, ?JobCard $jobCard): array
+    {
+        $existing = $this->normalizeRouteItinerary($jobCard?->route_itinerary);
+        if (!empty($existing)) {
+            return $existing;
+        }
+
+        if (!$leadId) {
+            return [];
+        }
+
+        $lead = Lead::query()
+            ->with([
+                'quotations' => fn($query) => $query->latest('quote_date')->latest('id')->limit(1),
+            ])
+            ->find($leadId);
+
+        $quotation = $lead?->quotations->first();
+        $sections = is_array($quotation?->day_sections) ? $quotation->day_sections : [];
+
+        return $this->normalizeRouteItinerary($sections);
+    }
+
+    /**
+     * @param mixed $itinerary
+     * @return array<int, array<string, string>>
+     */
+    private function normalizeRouteItinerary(mixed $itinerary): array
+    {
+        if (!is_array($itinerary)) {
+            return [];
+        }
+
+        return collect($itinerary)
+            ->map(function ($item): ?array {
+                if (is_string($item)) {
+                    $value = trim($item);
+                    if ($value === '') {
+                        return null;
+                    }
+
+                    return [
+                        'date' => $value,
+                        'dayDescription' => '',
+                    ];
+                }
+
+                if (!is_array($item)) {
+                    return null;
+                }
+
+                $date = trim((string) ($item['date'] ?? $item['dayDate'] ?? $item['dayTitle'] ?? ''));
+                $description = trim((string) ($item['dayDescription'] ?? $item['dateDescription'] ?? $item['description'] ?? ''));
+
+                if ($date === '' && $description === '') {
+                    return null;
+                }
+
+                return [
+                    'date' => $date,
+                    'dayDescription' => $description,
+                ];
+            })
+            ->filter()
+            ->values()
+            ->all();
     }
 
     private function resolveLogoDataUri(): ?string

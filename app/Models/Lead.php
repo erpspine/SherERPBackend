@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'lead_api_key_id',
     'booking_ref',
     'client_company',
+    'group_name',
     'agent_contact',
     'agent_email',
     'agent_phone',

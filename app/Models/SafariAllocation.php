@@ -15,6 +15,8 @@ class SafariAllocation extends Model
         'proforma_invoice_id',
         'vehicle_id',
         'driver_id',
+        'start_date',
+        'end_date',
         'status',
         'notes',
     ];
@@ -23,6 +25,8 @@ class SafariAllocation extends Model
      * @var array<string, string>
      */
     protected $casts = [
+        'start_date' => 'date',
+        'end_date' => 'date',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];

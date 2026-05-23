@@ -39,6 +39,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::get('/users/{user}', [UserController::class, 'show'])->middleware('permission:users.view');
     Route::post('/users', [UserController::class, 'store'])->middleware('permission:users.create');
     Route::put('/users/{user}', [UserController::class, 'update'])->middleware('permission:users.update');
+    Route::post('/users/{user}/reset-password', [UserController::class, 'adminResetPassword'])->middleware('permission:users.update');
     Route::delete('/users/{user}', [UserController::class, 'destroy'])->middleware('permission:users.delete');
     Route::get('/roles', [UserController::class, 'roles'])->middleware('permission:users.view');
     Route::get('/permissions', [UserController::class, 'permissions'])->middleware('permission:users.view');
@@ -110,6 +111,8 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::get('/invoices/{invoice}', [InvoiceController::class, 'show'])->middleware('permission:invoices.view');
     Route::post('/invoices', [InvoiceController::class, 'store'])->middleware('permission:invoices.create');
     Route::put('/invoices/{invoice}', [InvoiceController::class, 'update'])->middleware('permission:invoices.update');
+    Route::post('/invoices/{invoice}/attachment', [InvoiceController::class, 'uploadAttachment'])->middleware('permission:invoices.update');
+    Route::delete('/invoices/{invoice}/attachment', [InvoiceController::class, 'removeAttachment'])->middleware('permission:invoices.update');
     Route::post('/invoices/{invoice}/approve', [InvoiceController::class, 'approve'])->middleware('permission:invoices.approve');
     Route::delete('/invoices/{invoice}', [InvoiceController::class, 'destroy'])->middleware('permission:invoices.delete');
     Route::get('/invoice-payments', [InvoiceController::class, 'allPayments'])->middleware('permission:invoice-payments.view');

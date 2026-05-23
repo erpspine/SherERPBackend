@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Mail\UserCreatedMail;
+use App\Mail\UserPasswordResetMail;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Auth\Passwords\PasswordBroker;
@@ -301,7 +302,7 @@ class UserController extends Controller
 
         return response()->json([
             'message' => 'User updated successfully.',
-            'user' => $this->transformUser($user),
+            'user' => $this->transformUser($user, true),
         ]);
     }
 
@@ -313,6 +314,35 @@ class UserController extends Controller
         return response()->json([
             'message' => 'User deleted successfully.',
         ]);
+    }
+
+    public function adminResetPassword(User $user): JsonResponse
+    {
+        $plainPassword = Str::random(12);
+
+        DB::beginTransaction();
+
+        try {
+            $user->forceFill([
+                'password' => $plainPassword,
+                'remember_token' => Str::random(60),
+            ])->save();
+
+            Mail::to($user->email)->send(new UserPasswordResetMail($user, $plainPassword));
+
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Password reset and new credentials sent by email.',
+            ]);
+        } catch (\Throwable $exception) {
+            DB::rollBack();
+            report($exception);
+
+            return response()->json([
+                'message' => 'Password could not be reset.',
+            ], 500);
+        }
     }
 
     public function roles(): JsonResponse
@@ -382,7 +412,8 @@ class UserController extends Controller
         $user->loadMissing('roles:id,name');
         $roles = $user->roles->pluck('name')->values();
         $languages = $this->explodeLanguages($user->languages_spoken);
-        $computedExperience = $this->calculateExperienceFromStartDate($user->driving_started_at?->toDateString());
+        $drivingStartedAt = $this->normalizeDateString($user->driving_started_at);
+        $computedExperience = $this->calculateExperienceFromStartDate($drivingStartedAt);
         $experience = $computedExperience ?? $user->work_experience;
 
         $payload = [
@@ -392,11 +423,11 @@ class UserController extends Controller
             'phone' => $user->phone,
             'languages_spoken' => $user->languages_spoken,
             'languages_spoken_list' => $languages,
-            'driving_started_at' => $user->driving_started_at?->toDateString(),
+            'driving_started_at' => $drivingStartedAt,
             'work_experience' => $experience,
             'languagesSpoken' => $user->languages_spoken,
             'languagesSpokenList' => $languages,
-            'drivingStartedAt' => $user->driving_started_at?->toDateString(),
+            'drivingStartedAt' => $drivingStartedAt,
             'workExperience' => $experience,
             'role' => $user->role ?? $roles->first(),
             'roles' => $roles,
@@ -407,7 +438,7 @@ class UserController extends Controller
         ];
 
         if ($includePermissions) {
-            $payload['permissions'] = $user->getPermissionNames()->values();
+            $payload['permissions'] = $user->getAllPermissions()->pluck('name')->values();
         }
 
         return $payload;
@@ -428,7 +459,7 @@ class UserController extends Controller
             : ($user?->languages_spoken ?? null);
         $drivingStartedAt = isset($validated['driving_started_at'])
             ? (string) $validated['driving_started_at']
-            : ($user?->driving_started_at?->toDateString() ?? null);
+            : $this->normalizeDateString($user?->driving_started_at);
 
         $languages = $languages === '' ? null : $languages;
         $drivingStartedAt = $drivingStartedAt === '' ? null : $drivingStartedAt;
@@ -490,6 +521,27 @@ class UserController extends Controller
         return implode(', ', $parts);
     }
 
+    private function normalizeDateString(mixed $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (is_string($value)) {
+            try {
+                return Carbon::parse($value)->toDateString();
+            } catch (\Throwable) {
+                return null;
+            }
+        }
+
+        if ($value instanceof \DateTimeInterface) {
+            return Carbon::instance($value)->toDateString();
+        }
+
+        return null;
+    }
+
     /**
      * @param  mixed  $value
      */
@@ -547,7 +599,7 @@ class UserController extends Controller
             'message' => $message,
             'user' => $this->transformUser($user),
             'roles' => $user->getRoleNames()->values(),
-            'permissions' => $user->getPermissionNames()->values(),
+            'permissions' => $user->getAllPermissions()->pluck('name')->values(),
         ];
 
         if ($token !== null) {

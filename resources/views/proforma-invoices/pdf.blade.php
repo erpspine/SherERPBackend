@@ -102,6 +102,7 @@
             margin-top: 7px;
             font-size: 9.5px;
             color: #5d6b6b;
+            white-space: nowrap;
         }
 
         /* ── Meta block ── */
@@ -238,6 +239,33 @@
             color: #32595a;
         }
 
+        .bank-details {
+            width: 100%;
+            border: 1px solid #c0c0c0;
+            border-collapse: collapse;
+            background: #fcfcfc;
+        }
+
+        .bank-details td {
+            border: 1px solid #c0c0c0;
+            padding: 6px 9px;
+            font-size: 10px;
+            line-height: 1.45;
+        }
+
+        .bank-details .bank-title td {
+            background: #f4efe3;
+            color: #32595a;
+            font-weight: 700;
+            font-size: 10.5px;
+        }
+
+        .bank-label {
+            width: 42%;
+            font-weight: 700;
+            color: #32595a;
+        }
+
         /* ── Notes ── */
         .notes-box {
             margin-top: 10px;
@@ -248,6 +276,30 @@
             line-height: 1.6;
             color: #333;
             white-space: pre-wrap;
+        }
+
+        .terms-box {
+            margin-top: 6px;
+            padding: 6px 8px;
+            line-height: 1.25;
+            white-space: normal;
+        }
+
+        .last-page-block {
+            page-break-before: always;
+        }
+
+        .terms-box .term-heading {
+            margin: 0 0 3px;
+            font-weight: 700;
+        }
+
+        .terms-box .term-line {
+            margin: 0 0 2px;
+        }
+
+        .terms-box .term-spacer {
+            height: 3px;
         }
 
         /* ── Closing / signature ── */
@@ -301,7 +353,51 @@
 <body>
     @php
         $currency = $company['currency'] ?? 'TZS';
-        $piNo = 'PI-' . now()->format('Y') . '-' . str_pad($proformaInvoice['id'], 4, '0', STR_PAD_LEFT);
+        $formatDate = function ($value) {
+            if (empty($value)) {
+                return now()->format('d/m/Y');
+            }
+
+            $raw = trim((string) $value);
+            if (preg_match('/^\d{2}\/\d{2}\/\d{4}$/', $raw)) {
+                return $raw;
+            }
+
+            if (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $raw, $matches)) {
+                return $matches[3] . '/' . $matches[2] . '/' . $matches[1];
+            }
+
+            try {
+                return \Illuminate\Support\Carbon::parse($value)->format('d/m/Y');
+            } catch (\Throwable $exception) {
+                return (string) $value;
+            }
+        };
+        $formatDayTitle = function ($value) use ($formatDate) {
+            $raw = trim((string) $value);
+            if ($raw === '') {
+                return $raw;
+            }
+
+            if (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $raw)) {
+                return $formatDate($raw);
+            }
+
+            if (preg_match('/^\d{2}\/\d{2}\/\d{4}$/', $raw)) {
+                return $raw;
+            }
+
+            return $raw;
+        };
+        $piNo =
+            $proformaInvoice['piNo'] ??
+            ($proformaInvoice['proformaNumber'] ??
+                'PI-' . now()->format('Y-m') . '-' . str_pad($proformaInvoice['id'], 3, '0', STR_PAD_LEFT));
+        $quotationRef =
+            $proformaInvoice['quotationNumber'] ??
+            ($proformaInvoice['quotationId']
+                ? 'QT-' . now()->format('Y-m') . '-' . str_pad($proformaInvoice['quotationId'], 3, '0', STR_PAD_LEFT)
+                : null);
     @endphp
 
     <div class="sheet">
@@ -318,9 +414,8 @@
                         <div class="brand-tagline">Conquer the wild</div>
                         <div class="doc-heading">PROFORMA INVOICE</div>
                         <div class="contact-line">
-                            {{ $company['address'] ?? '' }}
-                            {{ !empty($company['phone']) ? ' | ' . $company['phone'] : '' }}
-                            {{ !empty($company['email']) ? ' | ' . $company['email'] : '' }}
+                            523 Engutoto, Dharam Singh Road, Njiro Industrial Area, P.O Box 613, Arusha, Tanzania | +255
+                            683 555 666 | info@sher.co.tz
                         </div>
                     </td>
                     <td style="width:32%;text-align:right;vertical-align:top;">
@@ -345,8 +440,8 @@
                         <div class="to-block">
                             <div class="to-label">Bill To</div>
                             <div class="to-name">{{ $proformaInvoice['client'] }}</div>
-                            @if (!empty($proformaInvoice['attention']))
-                                <div>Attn: {{ $proformaInvoice['attention'] }}</div>
+                            @if (!empty($proformaInvoice['groupName']))
+                                <div>Group Name: {{ $proformaInvoice['groupName'] }}</div>
                             @endif
                         </div>
                     </td>
@@ -354,10 +449,10 @@
                         <div class="ref-block">
                             <span class="ref-label">PI No:</span> {{ $piNo }}<br>
                             <span class="ref-label">Date:</span>
-                            {{ $proformaInvoice['quoteDate'] ?? now()->format('Y-m-d') }}<br>
-                            @if (!empty($proformaInvoice['quotationId']))
+                            {{ $formatDate($proformaInvoice['quoteDate'] ?? null) }}<br>
+                            @if (!empty($quotationRef))
                                 <span class="ref-label">Quotation Ref:</span>
-                                QT-{{ now()->format('Y') }}-{{ str_pad($proformaInvoice['quotationId'], 4, '0', STR_PAD_LEFT) }}<br>
+                                {{ $quotationRef }}<br>
                             @endif
                         </div>
                     </td>
@@ -394,7 +489,7 @@
                             @php $firstItem = $dayItems->first(); @endphp
                             <tr class="day-row">
                                 <td colspan="7">
-                                    {{ $dayTitle }}@if (!empty($firstItem['dayDescription']))
+                                    {{ $formatDayTitle($dayTitle) }}@if (!empty($firstItem['dayDescription']))
                                         &nbsp;&mdash;&nbsp;{{ $firstItem['dayDescription'] }}
                                     @endif
                                 </td>
@@ -435,16 +530,66 @@
                     </tr>
                 </table>
 
-                {{-- ── Notes ── --}}
-                @if (!empty($proformaInvoice['notes']))
-                    <div class="section-title">Notes</div>
-                    <div class="notes-box">{{ $proformaInvoice['notes'] }}</div>
-                @endif
+                <div class="last-page-block">
+                    {{-- ── Payment Terms ── --}}
+                    <div class="section-title">Payment Terms</div>
+                    <div class="notes-box terms-box">
+                        <div class="term-heading">PEAK SEASON RATES (JUNE - OCTOBER)</div>
+                        <div class="term-line">A non-refundable deposit of 30% shall be payable upon issuance and
+                            confirmation
+                            of the Proforma Invoice.</div>
+                        <div class="term-line">Full and final payment shall be made no later than thirty (30) days prior to
+                            the
+                            commencement of the safari.</div>
+                        <div class="term-line">No refunds shall be issued for cancellations made within thirty (30) days
+                            prior
+                            to the safari.</div>
+                        <div class="term-spacer"></div>
 
-                {{-- ── Payment Terms ── --}}
-                <div class="section-title">Payment Terms</div>
-                <div class="notes-box">Payment is due upon confirmation of this proforma invoice.
-                    Please quote the PI number <strong>{{ $piNo }}</strong> in all remittances.</div>
+                        <div class="term-heading">HIGH &amp; LOW SEASON RATES (JANUARY - MAY, NOVEMBER)</div>
+                        <div class="term-line">A non-refundable deposit of 30% shall be payable sixty (60) days prior to
+                            booking
+                            date.</div>
+                        <div class="term-line">Full and final payment shall be made no later than fourteen (14) days prior
+                            to
+                            the commencement of the safari.</div>
+                        <div class="term-line">No refunds shall be issued for cancellations made within thirty (30) days
+                            prior
+                            to the safari.</div>
+                        <div class="term-spacer"></div>
+
+                        <div class="term-line">An administrative fee of five percent (5%) shall apply to all park fees,
+                            concession fees or related expenses paid by Sher East Africa Ltd on behalf of the Client.</div>
+                        <div class="term-line">Deployment of any vehicle is strictly conditional upon receipt of cleared
+                            funds.
+                        </div>
+                    </div>
+
+                    {{-- ── Bank Details ── --}}
+                    <div class="section-title">Bank Details</div>
+                    <table class="bank-details">
+                        <tr>
+                            <td class="bank-label">Bank Name</td>
+                            <td>Azania Bank Plc</td>
+                        </tr>
+                        <tr>
+                            <td class="bank-label">Account Name</td>
+                            <td>Sher East Africa Limited</td>
+                        </tr>
+                        <tr>
+                            <td class="bank-label">Account No.</td>
+                            <td>010010003888</td>
+                        </tr>
+                        <tr>
+                            <td class="bank-label">Currency</td>
+                            <td>USD</td>
+                        </tr>
+                        <tr>
+                            <td class="bank-label">Swift Code</td>
+                            <td>AZANTZTZ</td>
+                        </tr>
+                    </table>
+                </div>
 
                 {{-- ── Closing ── --}}
                 <table class="closing">
@@ -475,6 +620,7 @@
                 </div>
             </div>
         </div>
+
     </body>
 
     </html>

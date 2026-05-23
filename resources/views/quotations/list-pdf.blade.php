@@ -161,6 +161,19 @@
 </head>
 
 <body>
+    @php
+        $formatDate = function ($value) {
+            if (empty($value)) {
+                return '-';
+            }
+
+            try {
+                return \Illuminate\Support\Carbon::parse($value)->format('d/m/Y');
+            } catch (\Throwable $exception) {
+                return (string) $value;
+            }
+        };
+    @endphp
     <div class="sheet">
         <div class="top-band"></div>
         <div class="watermark"></div>
@@ -215,7 +228,7 @@
                     @forelse ($rows as $row)
                         <tr>
                             <td>{{ $row['quotationNumber'] }}</td>
-                            <td>{{ $row['quoteDate'] }}</td>
+                            <td>{{ $formatDate($row['quoteDate']) }}</td>
                             <td>{{ $row['client'] }}</td>
                             <td>{{ $row['groupName'] }}</td>
                             <td>{{ $row['serviceSummary'] }}</td>

@@ -21,7 +21,7 @@ class QuotationController extends Controller
     public function index(): JsonResponse
     {
         $quotations = Quotation::query()
-            ->with(['lineItems', 'sentBy'])
+            ->with(['lineItems', 'sentBy', 'lead'])
             ->latest('id')
             ->get();
 
@@ -33,7 +33,7 @@ class QuotationController extends Controller
 
     public function show(Quotation $quotation): JsonResponse
     {
-        $quotation->load(['lineItems', 'sentBy']);
+        $quotation->load(['lineItems', 'sentBy', 'lead']);
 
         return response()->json([
             'message' => 'Quotation fetched successfully.',
@@ -67,7 +67,7 @@ class QuotationController extends Controller
                 $quotation->lineItems()->create($this->mapLineItemRequestToDb($item));
             }
 
-            return $quotation->fresh(['lineItems', 'sentBy']);
+            return $quotation->fresh(['lineItems', 'sentBy', 'lead']);
         });
 
         return response()->json([
@@ -109,7 +109,7 @@ class QuotationController extends Controller
                 }
             }
 
-            return $quotation->fresh(['lineItems', 'sentBy']);
+            return $quotation->fresh(['lineItems', 'sentBy', 'lead']);
         });
 
         return response()->json([
@@ -121,7 +121,7 @@ class QuotationController extends Controller
     public function markSent(Request $request, Quotation $quotation): JsonResponse
     {
         if ($quotation->status === 'Sent') {
-            $quotation->load(['lineItems', 'sentBy']);
+            $quotation->load(['lineItems', 'sentBy', 'lead']);
 
             return response()->json([
                 'message'   => 'Quotation is already marked as Sent.',
@@ -144,7 +144,7 @@ class QuotationController extends Controller
             ]);
         }
 
-        $quotation->load(['lineItems', 'sentBy']);
+        $quotation->load(['lineItems', 'sentBy', 'lead']);
 
         return response()->json([
             'message'   => 'Quotation marked as Sent.',
@@ -163,7 +163,7 @@ class QuotationController extends Controller
 
     public function pdf(Quotation $quotation): Response
     {
-        $quotation->load('lineItems');
+        $quotation->load(['lineItems', 'lead']);
 
         $company = $this->getCompanyPayload();
 
@@ -319,7 +319,7 @@ class QuotationController extends Controller
 
         $seq = $last ? ((int) substr($last, strlen($prefix))) + 1 : 1;
 
-        return $prefix . str_pad((string) $seq, 4, '0', STR_PAD_LEFT);
+        return $prefix . str_pad((string) $seq, 3, '0', STR_PAD_LEFT);
     }
 
     /**
@@ -339,7 +339,10 @@ class QuotationController extends Controller
             'total'          => (float) $item->total,
         ])->values()->all();
 
-        $serviceSummary = $this->extractServiceSummary(['lineItems' => $lineItems]);
+        $serviceSummary = $this->extractServiceSummary([
+            'lineItems' => $lineItems,
+            'daySections' => $quotation->day_sections ?? [],
+        ], $quotation->lead?->route_parks);
 
         return [
             'id'              => $quotation->id,
@@ -437,7 +440,7 @@ class QuotationController extends Controller
     private function filteredQuotationCollection(string $status, string $search): Collection
     {
         $quotations = Quotation::query()
-            ->with(['lineItems', 'sentBy'])
+            ->with(['lineItems', 'sentBy', 'lead'])
             ->latest('id')
             ->get();
 
@@ -467,20 +470,43 @@ class QuotationController extends Controller
     /**
      * @param array<string, mixed> $quotation
      */
-    private function extractServiceSummary(array $quotation): string
+    private function extractServiceSummary(array $quotation, ?string $leadRoute = null): string
     {
+        $normalizedLeadRoute = trim((string) $leadRoute);
+
+        if ($normalizedLeadRoute !== '') {
+            return $normalizedLeadRoute;
+        }
+
+        $daySections = $quotation['daySections'] ?? [];
+
+        if (is_array($daySections) && $daySections !== []) {
+            $routesFromSections = collect($daySections)
+                ->map(fn($section) => is_array($section) ? trim((string) ($section['dayDescription'] ?? '')) : '')
+                ->filter()
+                ->unique()
+                ->take(3)
+                ->values();
+
+            if ($routesFromSections->isNotEmpty()) {
+                return $routesFromSections->implode(' | ');
+            }
+        }
+
         $lineItems = $quotation['lineItems'] ?? [];
         if (! is_array($lineItems) || $lineItems === []) {
             return '-';
         }
 
         $items = collect($lineItems)
-            ->map(fn($item) => is_array($item) ? trim((string) ($item['item'] ?? '')) : '')
+            ->map(fn($item) => is_array($item)
+                ? trim((string) (($item['dayDescription'] ?? $item['description'] ?? '')))
+                : '')
             ->filter()
             ->unique()
             ->take(3)
             ->values();
 
-        return $items->isEmpty() ? '-' : $items->implode(', ');
+        return $items->isEmpty() ? '-' : $items->implode(' | ');
     }
 }

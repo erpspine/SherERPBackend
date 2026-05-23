@@ -38,6 +38,7 @@ class LeadController extends Controller
     {
         $validated = $request->validate([
             'clientCompany' => ['required', 'string', 'max:255'],
+            'groupName' => ['nullable', 'string', 'max:255'],
             'agentContact' => ['required', 'string', 'max:255'],
             'agentEmail' => ['required', 'email', 'max:255'],
             'agentPhone' => ['required', 'string', 'max:50'],
@@ -155,7 +156,7 @@ class LeadController extends Controller
     }
 
     /**
-     * Generate a unique booking reference in format: BK-YYYY-MM-NNNN
+     * Generate a unique booking reference in format: BK-YYYY-MM-NNN.
      * The sequence number resets to 1 at the start of each month.
      */
     private function createBookingRef(): string
@@ -178,12 +179,12 @@ class LeadController extends Controller
             $next = $lastSeq + 1;
         }
 
-        $candidate = $prefix . str_pad((string) $next, 4, '0', STR_PAD_LEFT);
+        $candidate = $prefix . str_pad((string) $next, 3, '0', STR_PAD_LEFT);
 
         // Collision-safe: if somehow the candidate already exists, keep incrementing
         while (Lead::query()->where('booking_ref', $candidate)->exists()) {
             $next++;
-            $candidate = $prefix . str_pad((string) $next, 4, '0', STR_PAD_LEFT);
+            $candidate = $prefix . str_pad((string) $next, 3, '0', STR_PAD_LEFT);
         }
 
         return $candidate;
@@ -194,6 +195,7 @@ class LeadController extends Controller
         $validated = $request->validate([
             'bookingRef' => ['sometimes', 'string', 'max:50', Rule::unique('leads', 'booking_ref')->ignore($lead->id)],
             'clientCompany' => ['sometimes', 'string', 'max:255'],
+            'groupName' => ['sometimes', 'nullable', 'string', 'max:255'],
             'agentContact' => ['sometimes', 'string', 'max:255'],
             'agentEmail' => ['sometimes', 'email', 'max:255'],
             'agentPhone' => ['sometimes', 'string', 'max:50'],
@@ -265,6 +267,7 @@ class LeadController extends Controller
     {
         $validated = $request->validate([
             'clientCompany' => ['required', 'string', 'max:255'],
+            'groupName' => ['nullable', 'string', 'max:255'],
             'agentContact' => ['required', 'string', 'max:255'],
             'agentEmail' => ['required', 'email', 'max:255'],
             'agentPhone' => ['required', 'string', 'max:50'],
@@ -337,6 +340,7 @@ class LeadController extends Controller
         $map = [
             'bookingRef' => 'booking_ref',
             'clientCompany' => 'client_company',
+            'groupName' => 'group_name',
             'agentContact' => 'agent_contact',
             'agentEmail' => 'agent_email',
             'agentPhone' => 'agent_phone',
@@ -378,6 +382,7 @@ class LeadController extends Controller
             'id' => $lead->id,
             'bookingRef' => $lead->booking_ref,
             'clientCompany' => $lead->client_company,
+            'groupName' => $lead->group_name,
             'agentContact' => $lead->agent_contact,
             'agentEmail' => $lead->agent_email,
             'agentPhone' => $lead->agent_phone,

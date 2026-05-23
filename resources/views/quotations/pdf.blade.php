@@ -300,9 +300,45 @@
 <body>
     @php
         $currency = $company['currency'] ?? 'TZS';
+        $formatDate = function ($value) {
+            if (empty($value)) {
+                return now()->format('d/m/Y');
+            }
+
+            $raw = trim((string) $value);
+            if (preg_match('/^\d{2}\/\d{2}\/\d{4}$/', $raw)) {
+                return $raw;
+            }
+
+            if (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $raw, $matches)) {
+                return $matches[3] . '/' . $matches[2] . '/' . $matches[1];
+            }
+
+            try {
+                return \Illuminate\Support\Carbon::parse($value)->format('d/m/Y');
+            } catch (\Throwable $exception) {
+                return (string) $value;
+            }
+        };
+        $formatDayTitle = function ($value) use ($formatDate) {
+            $raw = trim((string) $value);
+            if ($raw === '') {
+                return $raw;
+            }
+
+            if (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $raw)) {
+                return $formatDate($raw);
+            }
+
+            if (preg_match('/^\d{2}\/\d{2}\/\d{4}$/', $raw)) {
+                return $raw;
+            }
+
+            return $raw;
+        };
         $quoteNo =
             $quotation['quotationNumber'] ??
-            'QT-' . now()->format('Y') . '-' . str_pad($quotation['id'], 4, '0', STR_PAD_LEFT);
+            'QT-' . now()->format('Y-m') . '-' . str_pad($quotation['id'], 3, '0', STR_PAD_LEFT);
     @endphp
 
     <div class="sheet">
@@ -340,7 +376,7 @@
                             <div class="to-label">To</div>
                             <div class="to-name">{{ $quotation['client'] }}</div>
                             @if (!empty($quotation['groupName']))
-                                <div>Group: {{ $quotation['groupName'] }}</div>
+                                <div>Group Name: {{ $quotation['groupName'] }}</div>
                             @endif
                             @if (!empty($quotation['attention']))
                                 <div>Attn: {{ $quotation['attention'] }}</div>
@@ -351,7 +387,7 @@
                         <div class="ref-block">
                             <span class="ref-label">Quotation No:</span> {{ $quoteNo }}<br>
                             <span class="ref-label">Date:</span>
-                            {{ $quotation['quoteDate'] ?? now()->format('Y-m-d') }}<br>
+                            {{ $formatDate($quotation['quoteDate'] ?? null) }}<br>
                         </div>
                     </td>
                 </tr>
@@ -387,7 +423,7 @@
                             @php $firstItem = $dayItems->first(); @endphp
                             <tr class="day-row">
                                 <td colspan="7">
-                                    {{ $dayTitle }}@if (!empty($firstItem['dayDescription']))
+                                    {{ $formatDayTitle($dayTitle) }}@if (!empty($firstItem['dayDescription']))
                                         &nbsp;&mdash;&nbsp;{{ $firstItem['dayDescription'] }}
                                     @endif
                                 </td>

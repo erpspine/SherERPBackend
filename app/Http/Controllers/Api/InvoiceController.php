@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Invoice;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 
 class InvoiceController extends Controller
@@ -188,6 +189,51 @@ class InvoiceController extends Controller
         ], 201);
     }
 
+    public function uploadAttachment(Request $request, Invoice $invoice): JsonResponse
+    {
+        $validated = $request->validate([
+            'attachment' => ['required', 'file', 'max:10240', 'mimes:pdf,jpg,jpeg,png,doc,docx,xls,xlsx,csv'],
+        ]);
+
+        if (! empty($invoice->attachment_path)) {
+            Storage::disk('public')->delete($invoice->attachment_path);
+        }
+
+        $file = $validated['attachment'];
+        $path = $file->store('invoice-attachments', 'public');
+
+        $invoice->update([
+            'attachment_path' => $path,
+            'attachment_name' => $file->getClientOriginalName(),
+        ]);
+
+        $invoice->load(['proformaInvoice', 'payments']);
+
+        return response()->json([
+            'message' => 'Invoice attachment uploaded successfully.',
+            'invoice' => $this->transform($invoice),
+        ]);
+    }
+
+    public function removeAttachment(Invoice $invoice): JsonResponse
+    {
+        if (! empty($invoice->attachment_path)) {
+            Storage::disk('public')->delete($invoice->attachment_path);
+        }
+
+        $invoice->update([
+            'attachment_path' => null,
+            'attachment_name' => null,
+        ]);
+
+        $invoice->load(['proformaInvoice', 'payments']);
+
+        return response()->json([
+            'message' => 'Invoice attachment removed successfully.',
+            'invoice' => $this->transform($invoice),
+        ]);
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -237,11 +283,14 @@ class InvoiceController extends Controller
             'balance' => max(0, $total - $paidAmount),
             'status' => $invoice->status ?? 'pending',
             'notes' => $invoice->notes,
+            'attachmentName' => $invoice->attachment_name,
+            'attachmentUrl' => $invoice->attachment_path ? Storage::disk('public')->url($invoice->attachment_path) : null,
             'createdAt' => $invoice->created_at?->toISOString(),
             'updatedAt' => $invoice->updated_at?->toISOString(),
             'proformaInvoice' => $invoice->proformaInvoice ? [
                 'id' => $invoice->proformaInvoice->id,
-                'piNo' => 'PI-' . $invoice->proformaInvoice->id,
+                'piNo' => $invoice->proformaInvoice->proforma_number
+                    ?: 'PI-' . optional($invoice->proformaInvoice->created_at)->format('Y-m') . '-' . str_pad((string) $invoice->proformaInvoice->id, 3, '0', STR_PAD_LEFT),
             ] : null,
             'payments' => $payments
                 ->sortBy('date')
