@@ -18,7 +18,7 @@ class SafariAllocationController extends Controller
         $this->authorize('viewAny', SafariAllocation::class);
 
         $query = SafariAllocation::query()
-            ->with(['lead', 'proformaInvoice', 'vehicle', 'driver'])
+            ->with(['lead.quotations', 'proformaInvoice', 'vehicle', 'driver'])
             ->latest('id');
 
         if ($request->user()?->hasRole('Driver')) {
@@ -37,7 +37,7 @@ class SafariAllocationController extends Controller
     {
         $this->authorize('view', $safariAllocation);
 
-        $safariAllocation->load(['lead', 'proformaInvoice', 'vehicle', 'driver']);
+        $safariAllocation->load(['lead.quotations', 'proformaInvoice', 'vehicle', 'driver']);
 
         return response()->json([
             'message' => 'Safari allocation fetched successfully.',
@@ -67,18 +67,6 @@ class SafariAllocationController extends Controller
             optional($lead->end_date)?->format('Y-m-d'),
             optional($lead->start_date)?->format('Y-m-d'),
             optional($lead->end_date)?->format('Y-m-d')
-        );
-
-        $this->ensureVehicleAvailability(
-            (int) $validated['vehicleId'],
-            $startDate,
-            $endDate
-        );
-
-        $this->ensureLeadDateRangeAvailability(
-            (int) $validated['leadId'],
-            $startDate,
-            $endDate
         );
 
         $allocation = SafariAllocation::create([
@@ -127,19 +115,6 @@ class SafariAllocationController extends Controller
         );
 
         $nextVehicleId = (int) ($validated['vehicleId'] ?? $safariAllocation->vehicle_id);
-        $this->ensureVehicleAvailability(
-            $nextVehicleId,
-            $startDate,
-            $endDate,
-            $safariAllocation->id
-        );
-
-        $this->ensureLeadDateRangeAvailability(
-            $nextLeadId,
-            $startDate,
-            $endDate,
-            $safariAllocation->id
-        );
 
         $safariAllocation->update([
             'lead_id' => $nextLeadId,
@@ -180,6 +155,10 @@ class SafariAllocationController extends Controller
             ?: optional($allocation->lead?->start_date)->format('Y-m-d');
         $resolvedEndDate = optional($allocation->end_date)->format('Y-m-d')
             ?: optional($allocation->lead?->end_date)->format('Y-m-d');
+        $latestQuotation = $allocation->lead?->quotations?->sortByDesc(function ($quotation) {
+            return $quotation->quote_date?->timestamp ?: $quotation->created_at?->timestamp ?: 0;
+        })->first();
+        $itinerary = $latestQuotation?->day_sections ?? [];
 
         return [
             'id' => $allocation->id,
@@ -197,10 +176,13 @@ class SafariAllocationController extends Controller
                 'id' => $allocation->lead->id,
                 'bookingRef' => $allocation->lead->booking_ref,
                 'clientCompany' => $allocation->lead->client_company,
+                'groupName' => $allocation->lead->group_name ?: $latestQuotation?->group_name,
                 'agentContact' => $allocation->lead->agent_contact,
                 'startDate' => optional($allocation->lead->start_date)->format('Y-m-d'),
                 'endDate' => optional($allocation->lead->end_date)->format('Y-m-d'),
                 'routeParks' => $allocation->lead->route_parks,
+                'daySections' => $itinerary,
+                'itinerary' => $itinerary,
             ] : null,
             'proformaInvoice' => $allocation->proformaInvoice ? [
                 'id' => $allocation->proformaInvoice->id,
@@ -263,48 +245,5 @@ class SafariAllocationController extends Controller
             Carbon::parse($startDate)->toDateString(),
             Carbon::parse($endDate)->toDateString(),
         ];
-    }
-
-    private function ensureVehicleAvailability(int $vehicleId, string $startDate, string $endDate, ?int $ignoreAllocationId = null): void
-    {
-        $query = SafariAllocation::query()
-            ->where('vehicle_id', $vehicleId)
-            ->whereNotIn('status', ['Completed', 'Cancelled'])
-            ->whereDate('start_date', '<=', $endDate)
-            ->whereDate('end_date', '>=', $startDate);
-
-        if ($ignoreAllocationId) {
-            $query->whereKeyNot($ignoreAllocationId);
-        }
-
-        if ($query->exists()) {
-            throw ValidationException::withMessages([
-                'vehicleId' => ['This vehicle is already allocated on the selected date range.'],
-            ]);
-        }
-    }
-
-    private function ensureLeadDateRangeAvailability(int $leadId, string $startDate, string $endDate, ?int $ignoreAllocationId = null): void
-    {
-        $query = SafariAllocation::query()
-            ->where('lead_id', $leadId)
-            ->whereNotIn('status', ['Completed', 'Cancelled'])
-            ->whereDate('start_date', '<=', $endDate)
-            ->whereDate('end_date', '>=', $startDate)
-            ->where(function ($innerQuery) use ($startDate, $endDate) {
-                $innerQuery
-                    ->whereDate('start_date', '!=', $startDate)
-                    ->orWhereDate('end_date', '!=', $endDate);
-            });
-
-        if ($ignoreAllocationId) {
-            $query->whereKeyNot($ignoreAllocationId);
-        }
-
-        if ($query->exists()) {
-            throw ValidationException::withMessages([
-                'startDate' => ['Date ranges for this safari cannot overlap.'],
-            ]);
-        }
     }
 }

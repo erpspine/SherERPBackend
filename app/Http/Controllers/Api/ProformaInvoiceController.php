@@ -298,23 +298,6 @@ class ProformaInvoiceController extends Controller
                 continue;
             }
 
-            $blockedVehicleIds = $this->findBlockedVehicleIdsForRange(
-                $rangeVehicleIds,
-                $rangeStartDate,
-                $rangeEndDate,
-                $proformaInvoice->id,
-            );
-
-            if ($blockedVehicleIds->isNotEmpty()) {
-                $labels = $blockedVehicleIds
-                    ->map(fn(int $vehicleId): string => $this->vehicleLabel($vehicles->get($vehicleId), $vehicleId))
-                    ->implode(', ');
-
-                throw ValidationException::withMessages([
-                    'allocationRanges' => ['These vehicles are not available for the selected range ' . $rangeStartDate . ' to ' . $rangeEndDate . ': ' . $labels],
-                ]);
-            }
-
             foreach ($rangeVehicleIds as $vehicleId) {
                 /** @var Vehicle|null $vehicle */
                 $vehicle = $vehicles->get($vehicleId);
@@ -390,43 +373,6 @@ class ProformaInvoiceController extends Controller
             'jobCardsCreated' => $jobCardsCreated,
             'extraAllocationsCreated' => $extraAllocationsCreated,
         ];
-    }
-
-    /**
-     * @param array<int, int> $vehicleIds
-     * @return \Illuminate\Support\Collection<int, int>
-     */
-    private function findBlockedVehicleIdsForRange(
-        array $vehicleIds,
-        string $startDate,
-        string $endDate,
-        int $proformaInvoiceId,
-    ) {
-        return SafariAllocation::query()
-            ->whereIn('vehicle_id', $vehicleIds)
-            ->whereNotIn('status', ['Cancelled', 'Completed'])
-            ->where(function ($query) use ($proformaInvoiceId): void {
-                $query->whereNull('proforma_invoice_id')
-                    ->orWhere('proforma_invoice_id', '!=', $proformaInvoiceId);
-            })
-            ->whereDate('start_date', '<=', $endDate)
-            ->whereDate('end_date', '>=', $startDate)
-            ->pluck('vehicle_id')
-            ->unique()
-            ->values();
-    }
-
-    private function vehicleLabel(?Vehicle $vehicle, int $vehicleId): string
-    {
-        if ($vehicle === null) {
-            return 'Vehicle ' . $vehicleId;
-        }
-
-        $label = $vehicle->vehicle_no ?: 'Vehicle ' . $vehicleId;
-
-        return $vehicle->plate_no
-            ? $label . ' (' . $vehicle->plate_no . ')'
-            : $label;
     }
 
     private function generateProformaNumber(): string
