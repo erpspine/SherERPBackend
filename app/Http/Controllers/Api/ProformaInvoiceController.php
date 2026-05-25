@@ -183,7 +183,8 @@ class ProformaInvoiceController extends Controller
         ));
 
         $allocationSummary = DB::transaction(function () use ($quotation, $proformaInvoice, $allocationRanges): array {
-            if (($proformaInvoice->status ?? '') === 'Converted') {
+            // Confirm the PI if not already confirmed (covers both "Confirm and Allocate" and allocating on an already-confirmed PI).
+            if (!in_array($proformaInvoice->status ?? '', ['Confirmed', 'Allocated'], true)) {
                 $proformaInvoice->status = 'Confirmed';
                 $proformaInvoice->save();
             }
