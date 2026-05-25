@@ -106,6 +106,8 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::get('/proforma-invoices', [ProformaInvoiceController::class, 'index'])->middleware('permission:proforma-invoices.view');
     Route::get('/proforma-invoices/{proformaInvoice}', [ProformaInvoiceController::class, 'show'])->middleware('permission:proforma-invoices.view');
     Route::get('/proforma-invoices/{proformaInvoice}/pdf', [ProformaInvoiceController::class, 'pdf'])->middleware('permission:proforma-invoices.view');
+    Route::post('/proforma-invoices/{proformaInvoice}/confirm', [ProformaInvoiceController::class, 'confirm'])->middleware('permission:proforma-invoices.view');
+    Route::post('/proforma-invoices/{proformaInvoice}/allocate-vehicles', [ProformaInvoiceController::class, 'allocateVehicles'])->middleware('permission:proforma-invoices.view');
 
     Route::get('/invoices', [InvoiceController::class, 'index'])->middleware('permission:invoices.view');
     Route::get('/invoices/{invoice}', [InvoiceController::class, 'show'])->middleware('permission:invoices.view');

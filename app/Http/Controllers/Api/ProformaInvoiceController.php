@@ -16,7 +16,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -47,59 +46,7 @@ class ProformaInvoiceController extends Controller
     public function convertFromQuotation(Request $request, Quotation $quotation): JsonResponse
     {
         $senderId = $request->user()?->id;
-        $validated = $request->validate([
-            'allocationMode' => ['nullable', 'string', Rule::in(['now', 'later'])],
-            'allocationRanges' => ['nullable', 'array'],
-            'allocationRanges.*.startDate' => ['required_with:allocationRanges', 'date_format:Y-m-d'],
-            'allocationRanges.*.endDate' => ['required_with:allocationRanges', 'date_format:Y-m-d'],
-            'allocationRanges.*.vehicleIds' => ['required_with:allocationRanges', 'array'],
-            'allocationRanges.*.vehicleIds.*' => ['integer', 'exists:vehicles,id'],
-            'allocationType' => ['nullable', 'string', Rule::in(['full', 'full-plus-single'])],
-            'vehicleIds' => ['nullable', 'array'],
-            'vehicleIds.*' => ['integer', 'exists:vehicles,id'],
-            'extraDayAllocations' => ['nullable', 'array'],
-            'extraDayAllocations.*.date' => ['required_with:extraDayAllocations', 'date_format:Y-m-d'],
-            'extraDayAllocations.*.vehicleIds' => ['nullable', 'array'],
-            'extraDayAllocations.*.vehicleIds.*' => ['integer', 'exists:vehicles,id'],
-        ]);
-
-        $allocationMode = $validated['allocationMode'] ?? 'later';
-        $allocationType = $validated['allocationType'] ?? 'full';
-        $allocationRanges = array_values(array_map(
-            static function (array $item): array {
-                $rangeVehicleIds = array_values(array_unique(array_map(
-                    static fn(mixed $value): int => (int) $value,
-                    Arr::wrap($item['vehicleIds'] ?? [])
-                )));
-
-                return [
-                    'startDate' => (string) ($item['startDate'] ?? ''),
-                    'endDate' => (string) ($item['endDate'] ?? ''),
-                    'vehicleIds' => $rangeVehicleIds,
-                ];
-            },
-            Arr::wrap($validated['allocationRanges'] ?? [])
-        ));
-        $vehicleIds = array_values(array_unique(array_map(
-            static fn(mixed $value): int => (int) $value,
-            Arr::wrap($validated['vehicleIds'] ?? [])
-        )));
-        $extraDayAllocations = array_values(array_map(
-            static function (array $item): array {
-                $extraVehicleIds = array_values(array_unique(array_map(
-                    static fn(mixed $value): int => (int) $value,
-                    Arr::wrap($item['vehicleIds'] ?? [])
-                )));
-
-                return [
-                    'date' => (string) ($item['date'] ?? ''),
-                    'vehicleIds' => $extraVehicleIds,
-                ];
-            },
-            Arr::wrap($validated['extraDayAllocations'] ?? [])
-        ));
-
-        [$proformaInvoice, $created, $allocationSummary] = DB::transaction(function () use ($quotation, $senderId, $allocationMode, $allocationType, $allocationRanges, $vehicleIds, $extraDayAllocations): array {
+        [$proformaInvoice, $created, $allocationSummary] = DB::transaction(function () use ($quotation, $senderId): array {
             $quotation->load(['lineItems', 'lead']);
 
             $proformaInvoice = ProformaInvoice::query()->where('quotation_id', $quotation->id)->first();
@@ -109,7 +56,7 @@ class ProformaInvoiceController extends Controller
                 $proformaInvoice = new ProformaInvoice([
                     'proforma_number' => $this->generateProformaNumber(),
                     'quotation_id' => $quotation->id,
-                    'status' => 'Sent',
+                    'status' => 'Converted',
                 ]);
                 $created = true;
             }
@@ -159,50 +106,13 @@ class ProformaInvoiceController extends Controller
             }
 
             $allocationSummary = [
-                'mode' => $allocationMode,
-                'allocationType' => $allocationType,
-                'vehiclesRequested' => count($vehicleIds),
+                'mode' => 'later',
+                'allocationType' => 'ranges',
+                'vehiclesRequested' => 0,
                 'allocationsCreated' => 0,
                 'jobCardsCreated' => 0,
                 'extraAllocationsCreated' => 0,
             ];
-
-            if ($allocationMode === 'now' && ($allocationRanges !== [] || $vehicleIds !== [])) {
-                if ($allocationRanges === []) {
-                    $allocationRanges = [
-                        [
-                            'startDate' => optional($quotation->lead?->start_date)->toDateString() ?? '',
-                            'endDate' => optional($quotation->lead?->end_date)->toDateString() ?? '',
-                            'vehicleIds' => $vehicleIds,
-                        ],
-                    ];
-
-                    if ($allocationType === 'full-plus-single') {
-                        foreach ($extraDayAllocations as $extraDayAllocation) {
-                            $date = (string) ($extraDayAllocation['date'] ?? '');
-                            $rangeVehicleIds = Arr::wrap($extraDayAllocation['vehicleIds'] ?? []);
-                            if ($date === '' || $rangeVehicleIds === []) {
-                                continue;
-                            }
-
-                            $allocationRanges[] = [
-                                'startDate' => $date,
-                                'endDate' => $date,
-                                'vehicleIds' => array_values(array_unique(array_map(
-                                    static fn(mixed $value): int => (int) $value,
-                                    $rangeVehicleIds
-                                ))),
-                            ];
-                        }
-                    }
-                }
-
-                $allocationSummary = $this->createOperationalRecordsFromVehicleAllocation(
-                    $quotation,
-                    $proformaInvoice,
-                    $allocationRanges,
-                );
-            }
 
             return [$proformaInvoice->fresh(['lineItems', 'lead', 'quotation']), $created, $allocationSummary];
         });
@@ -214,6 +124,132 @@ class ProformaInvoiceController extends Controller
             'proformaInvoice' => $this->transformProformaInvoice($proformaInvoice),
             'allocationSummary' => $allocationSummary,
         ], $created ? 201 : 200);
+    }
+
+    public function confirm(Request $request, ProformaInvoice $proformaInvoice): JsonResponse
+    {
+        $proformaInvoice->load(['lead', 'quotation', 'lineItems']);
+
+        if (($proformaInvoice->status ?? '') !== 'Confirmed') {
+            $proformaInvoice->status = 'Confirmed';
+            $proformaInvoice->save();
+        }
+
+        if ($proformaInvoice->lead_id) {
+            Lead::query()->whereKey($proformaInvoice->lead_id)->update([
+                'booking_status' => 'Confirmed',
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'Proforma invoice confirmed successfully.',
+            'proformaInvoice' => $this->transformProformaInvoice($proformaInvoice->fresh(['lineItems', 'lead', 'quotation'])),
+        ]);
+    }
+
+    public function allocateVehicles(Request $request, ProformaInvoice $proformaInvoice): JsonResponse
+    {
+        $validated = $request->validate([
+            'allocationRanges' => ['required', 'array', 'min:1'],
+            'allocationRanges.*.startDate' => ['required_with:allocationRanges', 'date_format:Y-m-d'],
+            'allocationRanges.*.endDate' => ['required_with:allocationRanges', 'date_format:Y-m-d'],
+            'allocationRanges.*.vehicleIds' => ['required_with:allocationRanges', 'array', 'min:1'],
+            'allocationRanges.*.vehicleIds.*' => ['integer', 'exists:vehicles,id'],
+        ]);
+
+        $proformaInvoice->load(['quotation', 'lead', 'lineItems']);
+
+        $quotation = $proformaInvoice->quotation;
+        if ($quotation === null) {
+            throw ValidationException::withMessages([
+                'quotation' => ['PI allocation requires a linked quotation.'],
+            ]);
+        }
+
+        $allocationRanges = array_values(array_map(
+            static function (array $item): array {
+                $rangeVehicleIds = array_values(array_unique(array_map(
+                    static fn(mixed $value): int => (int) $value,
+                    Arr::wrap($item['vehicleIds'] ?? [])
+                )));
+
+                return [
+                    'startDate' => (string) ($item['startDate'] ?? ''),
+                    'endDate' => (string) ($item['endDate'] ?? ''),
+                    'vehicleIds' => $rangeVehicleIds,
+                ];
+            },
+            Arr::wrap($validated['allocationRanges'] ?? [])
+        ));
+
+        $allocationSummary = DB::transaction(function () use ($quotation, $proformaInvoice, $allocationRanges): array {
+            if (($proformaInvoice->status ?? '') === 'Converted') {
+                $proformaInvoice->status = 'Confirmed';
+                $proformaInvoice->save();
+            }
+
+            $summary = $this->createOperationalRecordsFromVehicleAllocation(
+                $quotation,
+                $proformaInvoice,
+                $allocationRanges,
+            );
+
+            if ($proformaInvoice->lead_id) {
+                Lead::query()->whereKey($proformaInvoice->lead_id)->update([
+                    'booking_status' => 'Confirmed',
+                ]);
+            }
+
+            $statusSummary = $this->syncProformaAllocationStatus($proformaInvoice);
+
+            return array_merge($summary, $statusSummary);
+        });
+
+        return response()->json([
+            'message' => 'Vehicle allocation saved successfully.',
+            'allocationSummary' => $allocationSummary,
+            'proformaInvoice' => $this->transformProformaInvoice($proformaInvoice->fresh(['lineItems', 'lead', 'quotation'])),
+        ]);
+    }
+
+    /**
+     * @return array{requestedVehicles: int, allocatedVehicles: int, allocationProgress: string}
+     */
+    private function syncProformaAllocationStatus(ProformaInvoice $proformaInvoice): array
+    {
+        $proformaInvoice->loadMissing('lead');
+
+        $requestedVehicles = max(0, (int) ($proformaInvoice->lead?->no_of_vehicles ?? 0));
+        $allocatedVehicles = SafariAllocation::query()
+            ->where('proforma_invoice_id', $proformaInvoice->id)
+            ->distinct('vehicle_id')
+            ->count('vehicle_id');
+
+        $nextStatus = $proformaInvoice->status;
+        $allocationProgress = 'none';
+
+        if ($allocatedVehicles > 0) {
+            if ($requestedVehicles > 0 && $allocatedVehicles >= $requestedVehicles) {
+                $nextStatus = 'Allocated';
+                $allocationProgress = 'full';
+            } else {
+                $nextStatus = 'Partially Allocated';
+                $allocationProgress = 'partial';
+            }
+        } elseif (($nextStatus ?? '') === 'Allocated' || ($nextStatus ?? '') === 'Partially Allocated') {
+            $nextStatus = 'Confirmed';
+        }
+
+        if ($nextStatus !== $proformaInvoice->status) {
+            $proformaInvoice->status = $nextStatus;
+            $proformaInvoice->save();
+        }
+
+        return [
+            'requestedVehicles' => $requestedVehicles,
+            'allocatedVehicles' => (int) $allocatedVehicles,
+            'allocationProgress' => $allocationProgress,
+        ];
     }
 
     /**
@@ -490,6 +526,9 @@ class ProformaInvoiceController extends Controller
             'client' => $proformaInvoice->client,
             'attention' => $proformaInvoice->attention,
             'groupName' => $proformaInvoice->quotation?->group_name,
+            'leadStartDate' => optional($proformaInvoice->lead?->start_date)->format('Y-m-d'),
+            'leadEndDate' => optional($proformaInvoice->lead?->end_date)->format('Y-m-d'),
+            'leadRouteParks' => $proformaInvoice->lead?->route_parks,
             'quoteDate' => optional($proformaInvoice->quote_date)->format('d/m/Y'),
             'notes' => $proformaInvoice->notes,
             'serviceSummary' => $serviceSummary,
