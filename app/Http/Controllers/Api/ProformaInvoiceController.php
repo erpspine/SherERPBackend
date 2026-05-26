@@ -159,6 +159,12 @@ class ProformaInvoiceController extends Controller
 
         $proformaInvoice->load(['quotation', 'lead', 'lineItems']);
 
+        if (($proformaInvoice->status ?? '') === 'Allocated') {
+            throw ValidationException::withMessages([
+                'status' => ['This proforma invoice is already fully allocated.'],
+            ]);
+        }
+
         $quotation = $proformaInvoice->quotation;
         if ($quotation === null) {
             throw ValidationException::withMessages([
