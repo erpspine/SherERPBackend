@@ -130,16 +130,18 @@ class ProformaInvoiceController extends Controller
     {
         $proformaInvoice->load(['lead', 'quotation', 'lineItems']);
 
-        if (($proformaInvoice->status ?? '') !== 'Confirmed') {
-            $proformaInvoice->status = 'Confirmed';
-            $proformaInvoice->save();
-        }
+        DB::transaction(function () use ($proformaInvoice): void {
+            if (($proformaInvoice->status ?? '') !== 'Confirmed') {
+                $proformaInvoice->status = 'Confirmed';
+                $proformaInvoice->save();
+            }
 
-        if ($proformaInvoice->lead_id) {
-            Lead::query()->whereKey($proformaInvoice->lead_id)->update([
-                'booking_status' => 'Confirmed',
-            ]);
-        }
+            if ($proformaInvoice->lead_id) {
+                Lead::query()->whereKey($proformaInvoice->lead_id)->update([
+                    'booking_status' => 'Confirmed',
+                ]);
+            }
+        });
 
         return response()->json([
             'message' => 'Proforma invoice confirmed successfully.',
@@ -159,9 +161,9 @@ class ProformaInvoiceController extends Controller
 
         $proformaInvoice->load(['quotation', 'lead', 'lineItems']);
 
-        if (($proformaInvoice->status ?? '') === 'Allocated') {
+        if (!in_array($proformaInvoice->status ?? '', ['Confirmed', 'Partially Allocated'], true)) {
             throw ValidationException::withMessages([
-                'status' => ['This proforma invoice is already fully allocated.'],
+                'status' => ['Proforma invoice must be confirmed before vehicles can be allocated.'],
             ]);
         }
 
@@ -189,27 +191,29 @@ class ProformaInvoiceController extends Controller
         ));
 
         $allocationSummary = DB::transaction(function () use ($quotation, $proformaInvoice, $allocationRanges): array {
-            // Confirm the PI if not already confirmed (covers both "Confirm and Allocate" and allocating on an already-confirmed PI).
-            if (!in_array($proformaInvoice->status ?? '', ['Confirmed', 'Allocated'], true)) {
-                $proformaInvoice->status = 'Confirmed';
-                $proformaInvoice->save();
-            }
-
             $summary = $this->createOperationalRecordsFromVehicleAllocation(
                 $quotation,
                 $proformaInvoice,
                 $allocationRanges,
             );
 
+            // Create/refresh the lead-level JobCard using the allocation window.
+            $jobCardSummary = ['jobCardsCreated' => 0, 'jobCardId' => 0];
             if ($proformaInvoice->lead_id) {
-                Lead::query()->whereKey($proformaInvoice->lead_id)->update([
-                    'booking_status' => 'Confirmed',
-                ]);
+                $startDates = array_filter(array_column($allocationRanges, 'startDate'));
+                $endDates = array_filter(array_column($allocationRanges, 'endDate'));
+                if ($startDates && $endDates) {
+                    $jobCardSummary = JobCard::ensureForLead(
+                        (int) $proformaInvoice->lead_id,
+                        min($startDates),
+                        max($endDates),
+                    );
+                }
             }
 
             $statusSummary = $this->syncProformaAllocationStatus($proformaInvoice);
 
-            return array_merge($summary, $statusSummary);
+            return array_merge($summary, $statusSummary, $jobCardSummary);
         });
 
         return response()->json([
@@ -261,7 +265,7 @@ class ProformaInvoiceController extends Controller
 
     /**
      * @param array<int, array{startDate: string, endDate: string, vehicleIds: array<int, int>}> $allocationRanges
-     * @return array{mode: string, allocationType: string, vehiclesRequested: int, allocationsCreated: int, jobCardsCreated: int, extraAllocationsCreated: int}
+     * @return array{mode: string, allocationType: string, vehiclesRequested: int, allocationsCreated: int, extraAllocationsCreated: int}
      */
     private function createOperationalRecordsFromVehicleAllocation(
         Quotation $quotation,
@@ -327,7 +331,6 @@ class ProformaInvoiceController extends Controller
 
         $allocationsCreated = 0;
         $extraAllocationsCreated = 0;
-        $jobCardsCreated = 0;
 
         foreach ($allocationRanges as $range) {
             $rangeStartDate = (string) $range['startDate'];
@@ -369,42 +372,6 @@ class ProformaInvoiceController extends Controller
                     'notes' => $allocation->notes ?: 'Auto-created from quotation to PI conversion.',
                 ]);
                 $allocation->save();
-
-                $jobCard = JobCard::query()->firstOrNew([
-                    'lead_id' => $lead->id,
-                    'vehicle_id' => $vehicle->id,
-                    'type' => 'Safari',
-                ]);
-
-                if (! $jobCard->exists) {
-                    $jobCardsCreated++;
-                }
-
-                $jobCard->fill([
-                    'status' => $jobCard->status ?: 'Open',
-                    'booking_reference_no' => $lead->booking_ref,
-                    'tour_operator_client_name' => $lead->client_company,
-                    'contact_person' => $lead->agent_contact,
-                    'contact_number' => $lead->agent_phone,
-                    'contact_email' => $lead->agent_email,
-                    'adults' => $lead->pax_adults ?? 0,
-                    'children' => $lead->pax_children ?? 0,
-                    'nationality' => $lead->client_country,
-                    'safari_start_date' => $lead->start_date,
-                    'safari_end_date' => $lead->end_date,
-                    'number_of_days' => $lead->start_date->diffInDays($lead->end_date) + 1,
-                    'route_summary' => $lead->route_parks,
-                    'additional_details' => $lead->special_requirements,
-                    'pickup_location' => $jobCard->pickup_location,
-                    'dropoff_location' => $jobCard->dropoff_location,
-                ]);
-                $jobCard->save();
-
-                if ($jobCard->job_card_no === null || $jobCard->job_card_no === '') {
-                    $jobCard->forceFill([
-                        'job_card_no' => 'JC-' . now()->format('Y') . '-' . str_pad((string) $jobCard->id, 4, '0', STR_PAD_LEFT),
-                    ])->save();
-                }
             }
         }
 
@@ -413,7 +380,6 @@ class ProformaInvoiceController extends Controller
             'allocationType' => 'ranges',
             'vehiclesRequested' => count($allVehicleIds),
             'allocationsCreated' => $allocationsCreated,
-            'jobCardsCreated' => $jobCardsCreated,
             'extraAllocationsCreated' => $extraAllocationsCreated,
         ];
     }

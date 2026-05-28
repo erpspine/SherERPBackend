@@ -308,6 +308,10 @@
                     <td><span class="label">Booking Number:</span> {{ $jobCard['bookingReferenceNo'] ?? '-' }}</td>
                 </tr>
                 <tr>
+                    <td><span class="label">Group Name:</span> {{ $jobCard['groupName'] ?? '-' }}</td>
+                    <td></td>
+                </tr>
+                <tr>
                     <td><span class="label">Start Date:</span>
                         {{ $formatDisplayDate($jobCard['safariStartDate'] ?? null) }}</td>
                     <td><span class="label">End Date:</span>

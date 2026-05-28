@@ -16,6 +16,8 @@ use App\Http\Controllers\Api\VehicleHistoryController;
 use App\Http\Controllers\Api\VehicleAvailabilityExportController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\JobCardController;
+use App\Http\Controllers\Api\LeaseContractController;
+use App\Http\Controllers\Api\LeaseAllocationController;
 use App\Http\Controllers\Api\SafariAllocationController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\ClientController;
@@ -193,4 +195,18 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('/safari-allocations', [SafariAllocationController::class, 'store'])->middleware('permission:safari-allocations.create');
     Route::put('/safari-allocations/{safariAllocation}', [SafariAllocationController::class, 'update'])->middleware('permission:safari-allocations.update');
     Route::delete('/safari-allocations/{safariAllocation}', [SafariAllocationController::class, 'destroy'])->middleware('permission:safari-allocations.delete');
+
+    // Lease Contracts
+    Route::get('/lease-contracts', [LeaseContractController::class, 'index'])->middleware('permission:vehicles.view');
+    Route::get('/lease-contracts/{leaseContract}', [LeaseContractController::class, 'show'])->middleware('permission:vehicles.view');
+    Route::post('/lease-contracts', [LeaseContractController::class, 'store'])->middleware('permission:vehicles.create');
+    Route::put('/lease-contracts/{leaseContract}', [LeaseContractController::class, 'update'])->middleware('permission:vehicles.update');
+    Route::delete('/lease-contracts/{leaseContract}', [LeaseContractController::class, 'destroy'])->middleware('permission:vehicles.delete');
+
+    // Lease Allocations (per-trip allocations within a lease contract)
+    Route::get('/lease-allocations', [LeaseAllocationController::class, 'index'])->middleware('permission:vehicles.view');
+    Route::get('/lease-allocations/{leaseAllocation}', [LeaseAllocationController::class, 'show'])->middleware('permission:vehicles.view');
+    Route::post('/lease-allocations', [LeaseAllocationController::class, 'store'])->middleware('permission:vehicles.create');
+    Route::put('/lease-allocations/{leaseAllocation}', [LeaseAllocationController::class, 'update'])->middleware('permission:vehicles.update');
+    Route::delete('/lease-allocations/{leaseAllocation}', [LeaseAllocationController::class, 'destroy'])->middleware('permission:vehicles.delete');
 });

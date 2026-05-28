@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\JobCard;
 use App\Models\Lead;
 use App\Models\SafariAllocation;
 use Carbon\Carbon;
@@ -79,6 +80,14 @@ class SafariAllocationController extends Controller
             'status' => $validated['status'] ?? 'Assigned',
             'notes' => $validated['notes'] ?? null,
         ]);
+
+        if ($startDate && $endDate) {
+            JobCard::ensureForLead(
+                (int) $validated['leadId'],
+                $startDate,
+                $endDate,
+            );
+        }
 
         $allocation->load(['lead', 'proformaInvoice', 'vehicle', 'driver']);
 

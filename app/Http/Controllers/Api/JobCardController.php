@@ -6,6 +6,7 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use App\Http\Controllers\Controller;
 use App\Models\JobCard;
 use App\Models\Lead;
+use App\Models\LeaseAllocation;
 use App\Models\SafariAllocation;
 use App\Models\Setting;
 use Illuminate\Http\JsonResponse;
@@ -16,7 +17,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 class JobCardController extends Controller
 {
-    private const TYPES = ['Safari', 'Safari - Daily', 'Safari - Monthly', 'Safari - Yearly', 'Test Drive', 'Service', 'Client Viewing', 'Others'];
+    private const TYPES = ['Safari', 'Safari - Daily', 'Safari - Monthly', 'Safari - Yearly', 'Long Term Lease', 'Test Drive', 'Service', 'Client Viewing', 'Others'];
 
     private const STATUSES = ['Open', 'Closed'];
 
@@ -28,7 +29,7 @@ class JobCardController extends Controller
     {
         $this->authorize('viewAny', JobCard::class);
 
-        $query = JobCard::query()->with(['lead', 'vehicle'])->latest('id');
+        $query = JobCard::query()->with(['lead', 'vehicle', 'leaseContract', 'leaseAllocation.vehicle', 'leaseAllocation.driver', 'leaseAllocation.leaseContract'])->latest('id');
 
         if ($request->user()?->hasRole('Driver')) {
             $query->whereIn(
@@ -51,7 +52,7 @@ class JobCardController extends Controller
     {
         $this->authorize('view', $jobCard);
 
-        $jobCard->load(['lead', 'vehicle']);
+        $jobCard->load(['lead', 'vehicle', 'leaseContract', 'leaseAllocation.vehicle', 'leaseAllocation.driver', 'leaseAllocation.leaseContract']);
 
         return response()->json([
             'message' => 'Job card fetched successfully.',
@@ -72,7 +73,13 @@ class JobCardController extends Controller
             ], 422);
         }
 
-        if (! $this->isSafariType($type) && empty($validated['vehicleId'])) {
+        if ($this->isLeaseType($type) && empty($validated['leaseAllocationId'])) {
+            return response()->json([
+                'message' => 'leaseAllocationId is required for Long Term Lease job cards.',
+            ], 422);
+        }
+
+        if (! $this->isSafariType($type) && ! $this->isLeaseType($type) && empty($validated['vehicleId'])) {
             return response()->json([
                 'message' => 'vehicleId is required for non-Safari job cards.',
             ], 422);
@@ -86,7 +93,7 @@ class JobCardController extends Controller
             'job_card_no' => $this->generateJobCardNo($jobCard->id),
         ]);
 
-        $jobCard->load(['lead', 'vehicle']);
+        $jobCard->load(['lead', 'vehicle', 'leaseContract', 'leaseAllocation.vehicle', 'leaseAllocation.driver', 'leaseAllocation.leaseContract']);
 
         return response()->json([
             'message' => 'Job card created successfully.',
@@ -103,6 +110,8 @@ class JobCardController extends Controller
         $type = $validated['type'] ?? $jobCard->type;
         $leadId = array_key_exists('leadId', $validated) ? $validated['leadId'] : $jobCard->lead_id;
         $vehicleId = array_key_exists('vehicleId', $validated) ? $validated['vehicleId'] : $jobCard->vehicle_id;
+        $leaseContractId = array_key_exists('leaseContractId', $validated) ? $validated['leaseContractId'] : $jobCard->lease_contract_id;
+        $leaseAllocationId = array_key_exists('leaseAllocationId', $validated) ? $validated['leaseAllocationId'] : $jobCard->lease_allocation_id;
 
         if ($this->isSafariType($type) && empty($leadId)) {
             return response()->json([
@@ -110,7 +119,13 @@ class JobCardController extends Controller
             ], 422);
         }
 
-        if (! $this->isSafariType($type) && empty($vehicleId)) {
+        if ($this->isLeaseType($type) && empty($leaseAllocationId)) {
+            return response()->json([
+                'message' => 'leaseAllocationId is required for Long Term Lease job cards.',
+            ], 422);
+        }
+
+        if (! $this->isSafariType($type) && ! $this->isLeaseType($type) && empty($vehicleId)) {
             return response()->json([
                 'message' => 'vehicleId is required for non-Safari job cards.',
             ], 422);
@@ -120,7 +135,7 @@ class JobCardController extends Controller
 
         $jobCard->update($payload);
 
-        $jobCard->load(['lead', 'vehicle']);
+        $jobCard->load(['lead', 'vehicle', 'leaseContract', 'leaseAllocation.vehicle', 'leaseAllocation.driver', 'leaseAllocation.leaseContract']);
 
         return response()->json([
             'message' => 'Job card updated successfully.',
@@ -154,6 +169,16 @@ class JobCardController extends Controller
         ];
 
         $transformedJobCard = $this->transform($jobCard);
+
+        $transformedJobCard['groupName'] = null;
+        if ($jobCard->lead_id) {
+            $latestQuotation = \App\Models\Quotation::query()
+                ->where('lead_id', $jobCard->lead_id)
+                ->latest('quote_date')
+                ->latest('id')
+                ->first();
+            $transformedJobCard['groupName'] = $latestQuotation?->group_name;
+        }
 
         if ($this->isSafariType($jobCard->type) && $jobCard->lead_id) {
             $allocations = SafariAllocation::query()
@@ -220,6 +245,8 @@ class JobCardController extends Controller
         return [
             'leadId' => $leadIdRules,
             'vehicleId' => [$required, 'nullable', 'integer', 'exists:vehicles,id'],
+            'leaseContractId' => ['sometimes', 'nullable', 'integer', 'exists:lease_contracts,id'],
+            'leaseAllocationId' => ['sometimes', 'nullable', 'integer', 'exists:lease_allocations,id'],
             'type' => [$required, 'string', Rule::in(self::TYPES)],
             'status' => ['sometimes', 'string', Rule::in(self::STATUSES)],
             'safariStartDate' => ['sometimes', 'nullable', 'date'],
@@ -265,6 +292,8 @@ class JobCardController extends Controller
         $payload = [
             'lead_id' => array_key_exists('leadId', $validated) ? $validated['leadId'] : $jobCard?->lead_id,
             'vehicle_id' => array_key_exists('vehicleId', $validated) ? $validated['vehicleId'] : $jobCard?->vehicle_id,
+            'lease_contract_id' => array_key_exists('leaseContractId', $validated) ? $validated['leaseContractId'] : $jobCard?->lease_contract_id,
+            'lease_allocation_id' => array_key_exists('leaseAllocationId', $validated) ? $validated['leaseAllocationId'] : $jobCard?->lease_allocation_id,
             'type' => $type,
             'status' => array_key_exists('status', $validated) ? $validated['status'] : ($jobCard?->status ?? 'Open'),
             'safari_start_date' => array_key_exists('safariStartDate', $validated) ? $validated['safariStartDate'] : optional($jobCard?->safari_start_date)->format('Y-m-d'),
@@ -309,6 +338,9 @@ class JobCardController extends Controller
                     $jobCard
                 );
 
+            $payload['lease_contract_id'] = null;
+            $payload['lease_allocation_id'] = null;
+
             $payload['reason'] = null;
             $payload['client_details'] = null;
             $payload['location'] = null;
@@ -320,8 +352,65 @@ class JobCardController extends Controller
             $payload['fuel_gauge_in'] = null;
             $payload['approximate_fuel_used'] = null;
             $payload['driver_details'] = null;
+        } elseif ($this->isLeaseType($type)) {
+            $payload['lead_id'] = null;
+            $payload['route_itinerary'] = null;
+
+            $allocation = $payload['lease_allocation_id']
+                ? LeaseAllocation::query()->with(['vehicle', 'driver', 'leaseContract'])->find($payload['lease_allocation_id'])
+                : null;
+
+            if ($allocation) {
+                // Allocation is the source of truth for vehicle, dates, itinerary.
+                $payload['lease_contract_id'] = $allocation->lease_contract_id;
+                $payload['vehicle_id'] = $allocation->vehicle_id;
+
+                if ($allocation->start_date) {
+                    $payload['safari_start_date'] = \Carbon\Carbon::parse($allocation->start_date)->toDateString();
+                }
+                if ($allocation->end_date) {
+                    $payload['safari_end_date'] = \Carbon\Carbon::parse($allocation->end_date)->toDateString();
+                }
+                if ($allocation->start_date && $allocation->end_date) {
+                    $payload['number_of_days'] = \Carbon\Carbon::parse($allocation->start_date)
+                        ->diffInDays(\Carbon\Carbon::parse($allocation->end_date)) + 1;
+                }
+
+                $itineraryText = trim((string) ($allocation->itinerary ?? ''));
+                if ($itineraryText !== '') {
+                    $payload['route_summary'] = $itineraryText;
+                    $payload['additional_details'] = $itineraryText;
+                }
+
+                $contract = $allocation->leaseContract;
+                if ($contract) {
+                    $payload['tour_operator_client_name'] = $payload['tour_operator_client_name'] ?: $contract->client_name;
+                }
+
+                if ($allocation->driver) {
+                    $payload['driver_details'] = $allocation->driver->name;
+                }
+            } else {
+                $payload['lease_contract_id'] = null;
+            }
+
+            $payload['reason'] = null;
+            $payload['client_details'] = null;
+            $payload['location'] = null;
+            $payload['kms'] = null;
+            $payload['booking_reference_no'] = null;
+            $payload['contact_person'] = null;
+            $payload['contact_number'] = null;
+            $payload['contact_email'] = null;
+            $payload['adults'] = null;
+            $payload['children'] = null;
+            $payload['nationality'] = null;
+            $payload['pickup_location'] = null;
+            $payload['dropoff_location'] = null;
         } else {
             $payload['lead_id'] = null;
+            $payload['lease_contract_id'] = null;
+            $payload['lease_allocation_id'] = null;
 
             if (! in_array($type, self::REASON_TYPES, true)) {
                 $payload['reason'] = null;
@@ -364,6 +453,11 @@ class JobCardController extends Controller
         return is_string($type) && str_starts_with(strtolower($type), 'safari');
     }
 
+    private function isLeaseType(?string $type): bool
+    {
+        return is_string($type) && strtolower(trim($type)) === 'long term lease';
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -382,6 +476,8 @@ class JobCardController extends Controller
             'jobCardNo' => $jobCard->job_card_no,
             'leadId' => $jobCard->lead_id,
             'vehicleId' => $jobCard->vehicle_id,
+            'leaseContractId' => $jobCard->lease_contract_id,
+            'leaseAllocationId' => $jobCard->lease_allocation_id,
             'type' => $jobCard->type,
             'status' => $jobCard->status,
             'safariStartDate' => optional($jobCard->safari_start_date)->format('Y-m-d'),
@@ -416,6 +512,37 @@ class JobCardController extends Controller
                 'id' => $jobCard->vehicle->id,
                 'vehicle_no' => $jobCard->vehicle->vehicle_no,
                 'plate_no' => $jobCard->vehicle->plate_no,
+            ] : null,
+            'leaseContract' => $jobCard->leaseContract ? [
+                'id' => $jobCard->leaseContract->id,
+                'clientName' => $jobCard->leaseContract->client_name,
+                'leaseType' => $jobCard->leaseContract->lease_type,
+                'startDate' => optional($jobCard->leaseContract->start_date)->toDateString(),
+                'endDate' => optional($jobCard->leaseContract->end_date)->toDateString(),
+                'status' => $jobCard->leaseContract->status,
+            ] : null,
+            'leaseAllocation' => $jobCard->leaseAllocation ? [
+                'id' => $jobCard->leaseAllocation->id,
+                'leaseContractId' => $jobCard->leaseAllocation->lease_contract_id,
+                'vehicleId' => $jobCard->leaseAllocation->vehicle_id,
+                'startDate' => optional($jobCard->leaseAllocation->start_date)->toDateString(),
+                'endDate' => optional($jobCard->leaseAllocation->end_date)->toDateString(),
+                'itinerary' => $jobCard->leaseAllocation->itinerary,
+                'status' => $jobCard->leaseAllocation->status,
+                'vehicle' => $jobCard->leaseAllocation->vehicle ? [
+                    'id' => $jobCard->leaseAllocation->vehicle->id,
+                    'vehicleNo' => $jobCard->leaseAllocation->vehicle->vehicle_no,
+                    'plateNo' => $jobCard->leaseAllocation->vehicle->plate_no,
+                ] : null,
+                'driver' => $jobCard->leaseAllocation->driver ? [
+                    'id' => $jobCard->leaseAllocation->driver->id,
+                    'name' => $jobCard->leaseAllocation->driver->name,
+                ] : null,
+                'contract' => $jobCard->leaseAllocation->leaseContract ? [
+                    'id' => $jobCard->leaseAllocation->leaseContract->id,
+                    'clientName' => $jobCard->leaseAllocation->leaseContract->client_name,
+                    'leaseType' => $jobCard->leaseAllocation->leaseContract->lease_type,
+                ] : null,
             ] : null,
             // Backward-compatible fields used by existing PDF/template consumers
             'numberOfClients' => [
