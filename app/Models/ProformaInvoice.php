@@ -19,6 +19,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'subtotal',
     'tax',
     'total',
+    'currency',
+    'exchange_rate',
     'status',
 ])]
 class ProformaInvoice extends Model
@@ -49,6 +51,7 @@ class ProformaInvoice extends Model
             'subtotal' => 'decimal:2',
             'tax' => 'decimal:2',
             'total' => 'decimal:2',
+            'exchange_rate' => 'decimal:4',
         ];
     }
 }

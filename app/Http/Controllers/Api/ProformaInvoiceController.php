@@ -46,7 +46,24 @@ class ProformaInvoiceController extends Controller
     public function convertFromQuotation(Request $request, Quotation $quotation): JsonResponse
     {
         $senderId = $request->user()?->id;
-        [$proformaInvoice, $created, $allocationSummary] = DB::transaction(function () use ($quotation, $senderId): array {
+
+        $validated = $request->validate([
+            'currency' => ['sometimes', 'nullable', 'string', 'in:USD,TZS'],
+            'exchangeRate' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+        ]);
+
+        $currency = strtoupper($validated['currency'] ?? 'USD');
+        $exchangeRate = $currency === 'TZS'
+            ? (float) ($validated['exchangeRate'] ?? 0)
+            : 1.0;
+
+        if ($currency === 'TZS' && $exchangeRate <= 0) {
+            throw ValidationException::withMessages([
+                'exchangeRate' => 'A valid exchange rate is required when currency is TZS.',
+            ]);
+        }
+
+        [$proformaInvoice, $created, $allocationSummary] = DB::transaction(function () use ($quotation, $senderId, $currency, $exchangeRate): array {
             $quotation->load(['lineItems', 'lead']);
 
             $proformaInvoice = ProformaInvoice::query()->where('quotation_id', $quotation->id)->first();
@@ -72,9 +89,11 @@ class ProformaInvoiceController extends Controller
                 'quote_date' => $quotation->quote_date,
                 'notes' => $quotation->notes,
                 'day_sections' => $quotation->day_sections,
-                'subtotal' => $quotation->subtotal,
-                'tax' => $quotation->tax,
-                'total' => $quotation->total,
+                'subtotal' => round(((float) $quotation->subtotal) * $exchangeRate, 2),
+                'tax' => round(((float) $quotation->tax) * $exchangeRate, 2),
+                'total' => round(((float) $quotation->total) * $exchangeRate, 2),
+                'currency' => $currency,
+                'exchange_rate' => $exchangeRate,
             ]);
             $proformaInvoice->save();
 
@@ -88,8 +107,8 @@ class ProformaInvoiceController extends Controller
                     'description' => $lineItem->description,
                     'unit' => $lineItem->unit,
                     'qty' => $lineItem->qty,
-                    'rate' => $lineItem->rate,
-                    'total' => $lineItem->total,
+                    'rate' => round(((float) $lineItem->rate) * $exchangeRate, 2),
+                    'total' => round(((float) $lineItem->total) * $exchangeRate, 2),
                 ]);
             }
 
@@ -145,6 +164,57 @@ class ProformaInvoiceController extends Controller
 
         return response()->json([
             'message' => 'Proforma invoice confirmed successfully.',
+            'proformaInvoice' => $this->transformProformaInvoice($proformaInvoice->fresh(['lineItems', 'lead', 'quotation'])),
+        ]);
+    }
+
+    public function updateCurrency(Request $request, ProformaInvoice $proformaInvoice): JsonResponse
+    {
+        $validated = $request->validate([
+            'currency' => ['required', 'string', 'in:USD,TZS'],
+            'exchangeRate' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+        ]);
+
+        $newCurrency = strtoupper($validated['currency']);
+        $newRate = $newCurrency === 'TZS'
+            ? (float) ($validated['exchangeRate'] ?? 0)
+            : 1.0;
+
+        if ($newCurrency === 'TZS' && $newRate <= 0) {
+            throw ValidationException::withMessages([
+                'exchangeRate' => 'A valid exchange rate is required when currency is TZS.',
+            ]);
+        }
+
+        $currentRate = (float) ($proformaInvoice->exchange_rate ?? 1);
+        if ($currentRate <= 0) {
+            $currentRate = 1.0;
+        }
+
+        // Scale factor to convert existing PI amounts to the new currency.
+        $factor = $newRate / $currentRate;
+
+        DB::transaction(function () use ($proformaInvoice, $newCurrency, $newRate, $factor): void {
+            $proformaInvoice->load('lineItems');
+
+            $proformaInvoice->fill([
+                'subtotal' => round(((float) $proformaInvoice->subtotal) * $factor, 2),
+                'tax' => round(((float) $proformaInvoice->tax) * $factor, 2),
+                'total' => round(((float) $proformaInvoice->total) * $factor, 2),
+                'currency' => $newCurrency,
+                'exchange_rate' => $newRate,
+            ]);
+            $proformaInvoice->save();
+
+            foreach ($proformaInvoice->lineItems as $lineItem) {
+                $lineItem->rate = round(((float) $lineItem->rate) * $factor, 2);
+                $lineItem->total = round(((float) $lineItem->total) * $factor, 2);
+                $lineItem->save();
+            }
+        });
+
+        return response()->json([
+            'message' => 'Proforma invoice currency updated successfully.',
             'proformaInvoice' => $this->transformProformaInvoice($proformaInvoice->fresh(['lineItems', 'lead', 'quotation'])),
         ]);
     }
@@ -411,7 +481,7 @@ class ProformaInvoiceController extends Controller
             'phone'                   => Setting::get('company_phone'),
             'address'                 => Setting::get('company_address'),
             'tax_registration_number' => Setting::get('tax_registration_number'),
-            'currency'                => Setting::get('default_currency', 'TZS'),
+            'currency'                => $proformaInvoice->currency ?: Setting::get('default_currency', 'USD'),
             'vat'                     => Setting::get('default_vat', '0'),
         ];
 
@@ -510,6 +580,8 @@ class ProformaInvoiceController extends Controller
             'subtotal' => (float) $proformaInvoice->subtotal,
             'tax' => (float) $proformaInvoice->tax,
             'total' => (float) $proformaInvoice->total,
+            'currency' => $proformaInvoice->currency ?: 'USD',
+            'exchangeRate' => (float) ($proformaInvoice->exchange_rate ?? 1),
             'status' => $proformaInvoice->status,
             'createdAt' => $proformaInvoice->created_at?->toISOString(),
             'updatedAt' => $proformaInvoice->updated_at?->toISOString(),

@@ -44,6 +44,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
     'fuel_gauge_in',
     'approximate_fuel_used',
     'driver_details',
+    'driver_allowance',
 ])]
 class JobCard extends Model
 {
@@ -188,6 +189,7 @@ class JobCard extends Model
             'fuel_gauge_out' => 'decimal:2',
             'fuel_gauge_in' => 'decimal:2',
             'approximate_fuel_used' => 'decimal:2',
+            'driver_allowance' => 'decimal:2',
             'route_itinerary' => 'array',
             'safari_start_date' => 'date',
             'safari_end_date' => 'date',

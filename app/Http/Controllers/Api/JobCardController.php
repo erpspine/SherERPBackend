@@ -280,6 +280,7 @@ class JobCardController extends Controller
             'fuelGaugeIn' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'approximateFuelUsed' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'driverDetails' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'driverAllowance' => ['sometimes', 'nullable', 'numeric', 'min:0'],
         ];
     }
 
@@ -324,6 +325,7 @@ class JobCardController extends Controller
             'fuel_gauge_in' => array_key_exists('fuelGaugeIn', $validated) ? $validated['fuelGaugeIn'] : $jobCard?->fuel_gauge_in,
             'approximate_fuel_used' => array_key_exists('approximateFuelUsed', $validated) ? $validated['approximateFuelUsed'] : $jobCard?->approximate_fuel_used,
             'driver_details' => array_key_exists('driverDetails', $validated) ? $validated['driverDetails'] : $jobCard?->driver_details,
+            'driver_allowance' => array_key_exists('driverAllowance', $validated) ? $validated['driverAllowance'] : $jobCard?->driver_allowance,
             'route_itinerary' => $jobCard?->route_itinerary,
             'guide_language' => $jobCard?->guide_language,
         ];
@@ -508,6 +510,7 @@ class JobCardController extends Controller
             'fuelGaugeIn' => $jobCard->fuel_gauge_in !== null ? (float) $jobCard->fuel_gauge_in : null,
             'approximateFuelUsed' => $jobCard->approximate_fuel_used !== null ? (float) $jobCard->approximate_fuel_used : null,
             'driverDetails' => $jobCard->driver_details,
+            'driverAllowance' => $jobCard->driver_allowance !== null ? (float) $jobCard->driver_allowance : null,
             'vehicle' => $jobCard->vehicle ? [
                 'id' => $jobCard->vehicle->id,
                 'vehicle_no' => $jobCard->vehicle->vehicle_no,
