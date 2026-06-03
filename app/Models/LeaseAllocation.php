@@ -18,6 +18,7 @@ class LeaseAllocation extends Model
         'start_date',
         'end_date',
         'itinerary',
+        'itinerary_items',
         'fuel_notes',
         'status',
         'notes',
@@ -26,6 +27,7 @@ class LeaseAllocation extends Model
     protected $casts = [
         'start_date' => 'date',
         'end_date' => 'date',
+        'itinerary_items' => 'array',
     ];
 
     public function leaseContract(): BelongsTo

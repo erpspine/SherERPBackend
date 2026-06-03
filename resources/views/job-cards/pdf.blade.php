@@ -217,6 +217,7 @@
     @php
         $type = $jobCard['type'] ?? 'Safari';
         $isSafari = is_string($type) && str_starts_with(strtolower($type), 'safari');
+        $isLease = is_string($type) && str_contains(strtolower($type), 'lease');
         $formatDisplayDate = function ($value) {
             if (empty($value)) {
                 return '-';
@@ -351,29 +352,52 @@
                 </tr>
             </table>
 
-            @if ($isSafari)
+            @if ($isSafari || $isLease)
+                @php
+                    $itineraryDays = $jobCard['routeItinerary'] ?? [];
+                    $driverAllowanceValue = $jobCard['driverAllowance'] ?? null;
+                @endphp
                 <div class="section-title">2. Itinerary</div>
                 <table class="itinerary">
                     <thead>
                         <tr>
-                            <th style="width:30%;">Date</th>
+                            <th style="width:25%;">Date</th>
                             <th>Date Description</th>
+                            <th style="width:20%;">Allowance/Day</th>
                         </tr>
                     </thead>
                     <tbody>
-                        @forelse(($jobCard['routeItinerary'] ?? []) as $day)
+                        @forelse($itineraryDays as $day)
                             <tr>
                                 <td>
                                     {{ $formatDisplayDate($day['date'] ?? ($day['dayDate'] ?? ($day['dayTitle'] ?? null))) }}
                                 </td>
                                 <td>{{ $day['dayDescription'] ?? ($day['dateDescription'] ?? ($day['description'] ?? '-')) }}
                                 </td>
+                                <td>
+                                    @if (isset($day['allowancePerDay']) && $day['allowancePerDay'] !== null && $day['allowancePerDay'] !== '')
+                                        {{ number_format((float) $day['allowancePerDay'], 2) }}
+                                    @else
+                                        -
+                                    @endif
+                                </td>
                             </tr>
                         @empty
                             <tr>
-                                <td colspan="2">No itinerary details provided.</td>
+                                <td colspan="3">No itinerary details provided.</td>
                             </tr>
                         @endforelse
+                        <tr>
+                            <td colspan="2" style="text-align:right;"><span class="label">Driver Allowance
+                                    Total:</span></td>
+                            <td>
+                                @if ($driverAllowanceValue !== null && $driverAllowanceValue !== '')
+                                    {{ number_format((float) $driverAllowanceValue, 2) }}
+                                @else
+                                    -
+                                @endif
+                            </td>
+                        </tr>
                     </tbody>
                 </table>
             @else

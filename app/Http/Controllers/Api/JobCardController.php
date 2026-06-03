@@ -257,6 +257,7 @@ class JobCardController extends Controller
             'routeItinerary' => ['sometimes', 'nullable', 'array'],
             'routeItinerary.*.date' => ['sometimes', 'nullable', 'string', 'max:100'],
             'routeItinerary.*.dayDescription' => ['sometimes', 'nullable', 'string', 'max:2000'],
+            'routeItinerary.*.allowancePerDay' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'additionalDetails' => ['sometimes', 'nullable', 'string'],
             'numberOfDays' => ['sometimes', 'nullable', 'integer', 'min:1', 'max:365'],
             'pickupLocation' => ['sometimes', 'nullable', 'string', 'max:255'],
@@ -606,6 +607,7 @@ class JobCardController extends Controller
                     return [
                         'date' => $value,
                         'dayDescription' => '',
+                        'allowancePerDay' => null,
                     ];
                 }
 
@@ -615,14 +617,22 @@ class JobCardController extends Controller
 
                 $date = trim((string) ($item['date'] ?? $item['dayDate'] ?? $item['dayTitle'] ?? ''));
                 $description = trim((string) ($item['dayDescription'] ?? $item['dateDescription'] ?? $item['description'] ?? ''));
+                $allowanceRaw = $item['allowancePerDay'] ?? $item['allowance_per_day'] ?? null;
+                $allowance = null;
+                if ($allowanceRaw !== null && $allowanceRaw !== '') {
+                    if (is_numeric($allowanceRaw)) {
+                        $allowance = (float) $allowanceRaw;
+                    }
+                }
 
-                if ($date === '' && $description === '') {
+                if ($date === '' && $description === '' && $allowance === null) {
                     return null;
                 }
 
                 return [
                     'date' => $date,
                     'dayDescription' => $description,
+                    'allowancePerDay' => $allowance,
                 ];
             })
             ->filter()

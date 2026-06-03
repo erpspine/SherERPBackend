@@ -566,6 +566,10 @@
                     </div>
 
                     {{-- ── Bank Details ── --}}
+                    @php
+                        $piCurrency = strtoupper($proformaInvoice['currency'] ?? 'USD');
+                        $bankAccountNo = $piCurrency === 'TZS' ? '010000225378' : '010010003888';
+                    @endphp
                     <div class="section-title">Bank Details</div>
                     <table class="bank-details">
                         <tr>
@@ -578,11 +582,11 @@
                         </tr>
                         <tr>
                             <td class="bank-label">Account No.</td>
-                            <td>010010003888</td>
+                            <td>{{ $bankAccountNo }}</td>
                         </tr>
                         <tr>
                             <td class="bank-label">Currency</td>
-                            <td>USD</td>
+                            <td>{{ $piCurrency }}</td>
                         </tr>
                         <tr>
                             <td class="bank-label">Swift Code</td>

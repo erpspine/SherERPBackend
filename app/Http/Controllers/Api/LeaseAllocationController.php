@@ -52,6 +52,7 @@ class LeaseAllocationController extends Controller
             'start_date' => $validated['startDate'],
             'end_date' => $validated['endDate'],
             'itinerary' => $validated['itinerary'] ?? null,
+            'itinerary_items' => $this->normalizeItineraryItems($validated['itineraryItems'] ?? null),
             'fuel_notes' => $validated['fuelNotes'] ?? null,
             'status' => $validated['status'] ?? 'Scheduled',
             'notes' => $validated['notes'] ?? null,
@@ -76,6 +77,7 @@ class LeaseAllocationController extends Controller
             'start_date' => $validated['startDate'],
             'end_date' => $validated['endDate'],
             'itinerary' => $validated['itinerary'] ?? null,
+            'itinerary_items' => $this->normalizeItineraryItems($validated['itineraryItems'] ?? null),
             'fuel_notes' => $validated['fuelNotes'] ?? null,
             'status' => $validated['status'] ?? $leaseAllocation->status,
             'notes' => $validated['notes'] ?? null,
@@ -107,6 +109,9 @@ class LeaseAllocationController extends Controller
             'startDate' => ['required', 'date_format:Y-m-d'],
             'endDate' => ['required', 'date_format:Y-m-d', 'after_or_equal:startDate'],
             'itinerary' => ['nullable', 'string', 'max:5000'],
+            'itineraryItems' => ['nullable', 'array'],
+            'itineraryItems.*.date' => ['nullable', 'string', 'max:100'],
+            'itineraryItems.*.details' => ['nullable', 'string', 'max:2000'],
             'fuelNotes' => ['nullable', 'string', 'max:2000'],
             'status' => ['nullable', Rule::in(self::STATUSES)],
             'notes' => ['nullable', 'string', 'max:2000'],
@@ -174,11 +179,37 @@ class LeaseAllocationController extends Controller
             'startDate' => optional($allocation->start_date)->format('Y-m-d'),
             'endDate' => optional($allocation->end_date)->format('Y-m-d'),
             'itinerary' => $allocation->itinerary,
+            'itineraryItems' => $this->normalizeItineraryItems($allocation->itinerary_items) ?? [],
             'fuelNotes' => $allocation->fuel_notes,
             'status' => $allocation->status,
             'notes' => $allocation->notes,
             'createdAt' => optional($allocation->created_at)->toIso8601String(),
             'updatedAt' => optional($allocation->updated_at)->toIso8601String(),
         ];
+    }
+
+    private function normalizeItineraryItems($items): ?array
+    {
+        if (! is_array($items)) {
+            return null;
+        }
+
+        $normalized = [];
+        foreach ($items as $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+            $date = isset($item['date']) ? trim((string) $item['date']) : '';
+            $details = isset($item['details']) ? trim((string) $item['details']) : '';
+            if ($date === '' && $details === '') {
+                continue;
+            }
+            $normalized[] = [
+                'date' => $date,
+                'details' => $details,
+            ];
+        }
+
+        return empty($normalized) ? null : $normalized;
     }
 }
