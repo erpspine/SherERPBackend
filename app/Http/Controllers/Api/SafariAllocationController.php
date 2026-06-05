@@ -20,6 +20,7 @@ class SafariAllocationController extends Controller
 
         $query = SafariAllocation::query()
             ->with(['lead.quotations', 'proformaInvoice', 'vehicle', 'driver'])
+            ->withCount('odometerLogs')
             ->latest('id');
 
         if ($request->user()?->hasRole('Driver')) {
@@ -39,6 +40,7 @@ class SafariAllocationController extends Controller
         $this->authorize('view', $safariAllocation);
 
         $safariAllocation->load(['lead.quotations', 'proformaInvoice', 'vehicle', 'driver']);
+        $safariAllocation->loadCount('odometerLogs');
 
         return response()->json([
             'message' => 'Safari allocation fetched successfully.',
@@ -209,6 +211,11 @@ class SafariAllocationController extends Controller
                 'id' => $allocation->driver->id,
                 'name' => $allocation->driver->name,
             ] : null,
+            // Number of odometer log entries already recorded for this trip.
+            // Surfaces in the driver app's trip list as "X odometer entries
+            // recorded" so drivers can see progress at a glance.
+            'odometer_log_count' => (int) ($allocation->odometer_logs_count ?? 0),
+            'odometerLogCount' => (int) ($allocation->odometer_logs_count ?? 0),
         ];
     }
 
