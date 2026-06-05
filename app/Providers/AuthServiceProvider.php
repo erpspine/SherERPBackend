@@ -4,10 +4,12 @@ namespace App\Providers;
 
 use App\Models\Invoice;
 use App\Models\JobCard;
+use App\Models\OdometerLog;
 use App\Models\SafariAllocation;
 use App\Models\User;
 use App\Policies\InvoicePolicy;
 use App\Policies\JobCardPolicy;
+use App\Policies\OdometerLogPolicy;
 use App\Policies\SafariAllocationPolicy;
 use Illuminate\Foundation\Support\Providers\AuthServiceProvider as ServiceProvider;
 use Illuminate\Support\Facades\Gate;
@@ -20,6 +22,7 @@ class AuthServiceProvider extends ServiceProvider
     protected $policies = [
         Invoice::class => InvoicePolicy::class,
         JobCard::class => JobCardPolicy::class,
+        OdometerLog::class => OdometerLogPolicy::class,
         SafariAllocation::class => SafariAllocationPolicy::class,
     ];
 

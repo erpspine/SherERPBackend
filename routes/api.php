@@ -26,6 +26,7 @@ use App\Http\Controllers\Api\ChecklistItemController;
 use App\Http\Controllers\Api\DestinationDistanceController;
 use App\Http\Controllers\Api\InspectionController;
 use App\Http\Controllers\Api\FuelRequisitionController;
+use App\Http\Controllers\Api\OdometerLogController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [UserController::class, 'login']);
@@ -210,4 +211,15 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('/lease-allocations', [LeaseAllocationController::class, 'store'])->middleware('permission:vehicles.create');
     Route::put('/lease-allocations/{leaseAllocation}', [LeaseAllocationController::class, 'update'])->middleware('permission:vehicles.update');
     Route::delete('/lease-allocations/{leaseAllocation}', [LeaseAllocationController::class, 'destroy'])->middleware('permission:vehicles.delete');
+
+    // Odometer Logs – per trip (safari allocation) reading history captured
+    // by drivers. Idempotent on client_id so the offline outbox can retry.
+    Route::get('/trips/{safariAllocation}/odometer-logs', [OdometerLogController::class, 'indexForTrip'])
+        ->middleware('permission:odometer-logs.view');
+    Route::post('/trips/{safariAllocation}/odometer-logs', [OdometerLogController::class, 'storeForTrip'])
+        ->middleware('permission:odometer-logs.create');
+    Route::match(['put', 'patch'], '/odometer-logs/{odometerLog}', [OdometerLogController::class, 'update'])
+        ->middleware('permission:odometer-logs.update');
+    Route::delete('/odometer-logs/{odometerLog}', [OdometerLogController::class, 'destroy'])
+        ->middleware('permission:odometer-logs.delete');
 });

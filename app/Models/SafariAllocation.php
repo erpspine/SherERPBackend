@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class SafariAllocation extends Model
 {
@@ -49,5 +50,10 @@ class SafariAllocation extends Model
     public function driver(): BelongsTo
     {
         return $this->belongsTo(User::class, 'driver_id');
+    }
+
+    public function odometerLogs(): HasMany
+    {
+        return $this->hasMany(OdometerLog::class);
     }
 }
