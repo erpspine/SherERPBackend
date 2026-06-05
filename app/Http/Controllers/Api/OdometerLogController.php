@@ -16,7 +16,17 @@ use Throwable;
 
 class OdometerLogController extends Controller
 {
-    private const ENTRY_TYPES = ['Start', 'Stop', 'End', 'Fuel'];
+    // Simplified taxonomy: every reading is either a generic Movement
+    // (any en-route odometer capture) or a Fuel-up that opens a tank
+    // cycle. Legacy Start / Stop / End rows are coerced to Movement on
+    // read so older app builds keep working.
+    private const ENTRY_TYPES = ['Movement', 'Fuel'];
+
+    private const LEGACY_TYPE_MAP = [
+        'Start' => 'Movement',
+        'Stop' => 'Movement',
+        'End' => 'Movement',
+    ];
 
     /**
      * GET /api/trips/{safariAllocation}/odometer-logs
@@ -52,6 +62,10 @@ class OdometerLogController extends Controller
         // Driver must own the trip and have permission to create logs.
         $this->authorize('view', $safariAllocation);
         $this->authorize('create', OdometerLog::class);
+
+        // Older app builds may still send Start / Stop / End – coerce them
+        // to Movement so the new tighter validator accepts the request.
+        $this->coerceLegacyEntryType($request);
 
         $validated = $request->validate([
             'client_id' => ['nullable', 'string', 'max:64'],
@@ -185,6 +199,8 @@ class OdometerLogController extends Controller
     {
         $this->authorize('update', $odometerLog);
 
+        $this->coerceLegacyEntryType($request);
+
         $validated = $request->validate([
             'entry_type' => ['sometimes', Rule::in(self::ENTRY_TYPES)],
             'location' => ['sometimes', 'string', 'max:255'],
@@ -263,6 +279,23 @@ class OdometerLogController extends Controller
         }
     }
 
+    /**
+     * Older app builds and any legacy DB rows may carry Start / Stop / End
+     * entry types. Coerce those to the simplified Movement value so they
+     * pass the new validator (and the client always sees Movement / Fuel).
+     */
+    private function coerceLegacyEntryType(Request $request): void
+    {
+        $raw = $request->input('entry_type');
+        if (! is_string($raw) || $raw === '') {
+            return;
+        }
+        $mapped = self::LEGACY_TYPE_MAP[$raw] ?? null;
+        if ($mapped !== null) {
+            $request->merge(['entry_type' => $mapped]);
+        }
+    }
+
     private function transform(OdometerLog $log): array
     {
         $photoUrl = null;
@@ -274,6 +307,9 @@ class OdometerLogController extends Controller
             }
         }
 
+        $entryType = (string) $log->entry_type;
+        $entryType = self::LEGACY_TYPE_MAP[$entryType] ?? $entryType;
+
         return [
             'id' => $log->id,
             'trip_id' => $log->safari_allocation_id,
@@ -282,7 +318,7 @@ class OdometerLogController extends Controller
             'recorded_by' => $log->user?->name,
             'fuel_log_id' => $log->fuel_log_id,
             'client_id' => $log->client_id,
-            'entry_type' => $log->entry_type,
+            'entry_type' => $entryType,
             'location' => $log->location,
             'odometer_reading' => (int) $log->odometer_reading,
             'liters' => $log->liters !== null ? (float) $log->liters : null,
