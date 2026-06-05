@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Mail\UserCreatedMail;
 use App\Mail\UserPasswordResetMail;
 use App\Models\User;
+use App\Services\SmsService;
 use Carbon\Carbon;
 use Illuminate\Auth\Passwords\PasswordBroker;
 use Illuminate\Auth\Events\PasswordReset;
@@ -216,6 +217,7 @@ class UserController extends Controller
             'roles.*' => ['string', Rule::in($this->availableRoles())],
             'status' => ['required', Rule::in(['Active', 'Inactive'])],
             'receive_notifications' => ['sometimes', 'boolean'],
+            'send_sms' => ['sometimes', 'boolean'],
         ]);
 
         $roles = $this->extractRoleNames($validated, true);
@@ -245,10 +247,21 @@ class UserController extends Controller
 
             Mail::to($user->email)->send(new UserCreatedMail($user, $plainPassword));
 
+            $smsSent = false;
+            if (! empty($validated['send_sms']) && $user->phone) {
+                $smsSent = app(SmsService::class)->send(
+                    $user->phone,
+                    $this->buildCredentialsSmsBody($user->name, $user->email, $plainPassword)
+                );
+            }
+
             DB::commit();
 
             return response()->json([
-                'message' => 'User created and credentials sent by email.',
+                'message' => $smsSent
+                    ? 'User created. Credentials sent by email and SMS.'
+                    : 'User created and credentials sent by email.',
+                'sms_sent' => $smsSent,
                 'user' => $this->transformUser($user),
             ], 201);
         } catch (\Throwable $exception) {
@@ -316,8 +329,12 @@ class UserController extends Controller
         ]);
     }
 
-    public function adminResetPassword(User $user): JsonResponse
+    public function adminResetPassword(Request $request, User $user): JsonResponse
     {
+        $validated = $request->validate([
+            'send_sms' => ['sometimes', 'boolean'],
+        ]);
+
         $plainPassword = Str::random(12);
 
         DB::beginTransaction();
@@ -330,10 +347,21 @@ class UserController extends Controller
 
             Mail::to($user->email)->send(new UserPasswordResetMail($user, $plainPassword));
 
+            $smsSent = false;
+            if (! empty($validated['send_sms']) && $user->phone) {
+                $smsSent = app(SmsService::class)->send(
+                    $user->phone,
+                    $this->buildCredentialsSmsBody($user->name, $user->email, $plainPassword, true)
+                );
+            }
+
             DB::commit();
 
             return response()->json([
-                'message' => 'Password reset and new credentials sent by email.',
+                'message' => $smsSent
+                    ? 'Password reset. New credentials sent by email and SMS.'
+                    : 'Password reset and new credentials sent by email.',
+                'sms_sent' => $smsSent,
             ]);
         } catch (\Throwable $exception) {
             DB::rollBack();
@@ -343,6 +371,26 @@ class UserController extends Controller
                 'message' => 'Password could not be reset.',
             ], 500);
         }
+    }
+
+    private function buildCredentialsSmsBody(string $name, string $email, string $password, bool $isReset = false): string
+    {
+        $appName = config('app.name', 'SHER ERP');
+        $url = config('app.frontend_url', config('app.url', ''));
+        $intro = $isReset
+            ? "Your {$appName} password has been reset."
+            : "Welcome to {$appName}, {$name}.";
+
+        $lines = [
+            $intro,
+            "Email: {$email}",
+            "Password: {$password}",
+        ];
+        if (is_string($url) && $url !== '') {
+            $lines[] = "Login: {$url}";
+        }
+
+        return implode("\n", $lines);
     }
 
     public function roles(): JsonResponse
