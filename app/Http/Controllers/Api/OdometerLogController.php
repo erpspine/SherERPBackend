@@ -7,6 +7,8 @@ use App\Models\OdometerLog;
 use App\Models\SafariAllocation;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -81,20 +83,77 @@ class OdometerLogController extends Controller
         $photoPath = $this->storePhoto($request);
 
         try {
-            $log = OdometerLog::create([
-                'safari_allocation_id' => $safariAllocation->id,
-                'user_id' => $request->user()?->id,
-                'client_id' => $clientId,
-                'entry_type' => $validated['entry_type'],
-                'location' => $validated['location'],
-                'odometer_reading' => $validated['odometer_reading'],
-                'liters' => $validated['liters'] ?? null,
-                'unit_price' => $validated['unit_price'] ?? null,
-                'station' => $validated['station'] ?? null,
-                'notes' => $validated['notes'] ?? null,
-                'photo_path' => $photoPath,
-                'recorded_at' => $validated['recorded_at'] ?? now(),
-            ]);
+            $recordedAt = isset($validated['recorded_at'])
+                ? Carbon::parse($validated['recorded_at'])
+                : now();
+
+            $log = DB::transaction(function () use (
+                $safariAllocation,
+                $request,
+                $validated,
+                $clientId,
+                $photoPath,
+                $recordedAt,
+            ): OdometerLog {
+                $entryType = $validated['entry_type'];
+
+                // Decide which Fuel log this reading belongs to:
+                //  - Fuel rows open their own cycle (fuel_log_id stays null).
+                //  - Other rows attach to the latest Fuel log on this trip
+                //    whose recorded_at is <= this reading.
+                $fuelLogId = null;
+                if ($entryType !== 'Fuel') {
+                    $fuelLogId = OdometerLog::query()
+                        ->where('safari_allocation_id', $safariAllocation->id)
+                        ->where('entry_type', 'Fuel')
+                        ->where('recorded_at', '<=', $recordedAt)
+                        ->orderByDesc('recorded_at')
+                        ->orderByDesc('id')
+                        ->value('id');
+                }
+
+                $log = OdometerLog::create([
+                    'safari_allocation_id' => $safariAllocation->id,
+                    'user_id' => $request->user()?->id,
+                    'fuel_log_id' => $fuelLogId,
+                    'client_id' => $clientId,
+                    'entry_type' => $entryType,
+                    'location' => $validated['location'],
+                    'odometer_reading' => $validated['odometer_reading'],
+                    'liters' => $validated['liters'] ?? null,
+                    'unit_price' => $validated['unit_price'] ?? null,
+                    'station' => $validated['station'] ?? null,
+                    'notes' => $validated['notes'] ?? null,
+                    'photo_path' => $photoPath,
+                    'recorded_at' => $recordedAt,
+                ]);
+
+                if ($entryType === 'Fuel') {
+                    // Closing the previous open tank cycle on this trip.
+                    OdometerLog::query()
+                        ->where('safari_allocation_id', $safariAllocation->id)
+                        ->where('entry_type', 'Fuel')
+                        ->whereNull('closed_at')
+                        ->where('id', '!=', $log->id)
+                        ->where('recorded_at', '<', $recordedAt)
+                        ->orderByDesc('recorded_at')
+                        ->orderByDesc('id')
+                        ->limit(1)
+                        ->update(['closed_at' => $recordedAt]);
+
+                    // Adopt any orphan readings recorded between the
+                    // previous fuel-up and this one that aren't yet linked
+                    // to a fuel cycle (handles back-dated entries).
+                    OdometerLog::query()
+                        ->where('safari_allocation_id', $safariAllocation->id)
+                        ->where('entry_type', '!=', 'Fuel')
+                        ->whereNull('fuel_log_id')
+                        ->where('recorded_at', '<=', $recordedAt)
+                        ->update(['fuel_log_id' => $log->id]);
+                }
+
+                return $log;
+            });
         } catch (Throwable $e) {
             // If the insert raced another sync attempt on the same client_id,
             // recover the winning row instead of returning a 500.
@@ -221,6 +280,7 @@ class OdometerLogController extends Controller
             'safari_allocation_id' => $log->safari_allocation_id,
             'user_id' => $log->user_id,
             'recorded_by' => $log->user?->name,
+            'fuel_log_id' => $log->fuel_log_id,
             'client_id' => $log->client_id,
             'entry_type' => $log->entry_type,
             'location' => $log->location,
@@ -232,6 +292,7 @@ class OdometerLogController extends Controller
             'photo_path' => $log->photo_path,
             'photo_url' => $photoUrl,
             'recorded_at' => optional($log->recorded_at)?->toIso8601String(),
+            'closed_at' => optional($log->closed_at)?->toIso8601String(),
             'created_at' => optional($log->created_at)?->toIso8601String(),
             'updated_at' => optional($log->updated_at)?->toIso8601String(),
         ];
