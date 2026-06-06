@@ -214,6 +214,10 @@ Route::middleware('auth:sanctum')->group(function (): void {
 
     // Odometer Logs – per trip (safari allocation) reading history captured
     // by drivers. Idempotent on client_id so the offline outbox can retry.
+    Route::get('/trips/{safariAllocation}/odometer-logs/report', [OdometerLogController::class, 'reportForTrip'])
+        ->middleware('permission:odometer-logs.view');
+    Route::get('/trips/{safariAllocation}/odometer-logs/pdf', [OdometerLogController::class, 'pdfForTrip'])
+        ->middleware('permission:odometer-logs.view');
     Route::get('/trips/{safariAllocation}/odometer-logs', [OdometerLogController::class, 'indexForTrip'])
         ->middleware('permission:odometer-logs.view');
     Route::post('/trips/{safariAllocation}/odometer-logs', [OdometerLogController::class, 'storeForTrip'])
