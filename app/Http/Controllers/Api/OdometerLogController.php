@@ -110,15 +110,18 @@ class OdometerLogController extends Controller
                 $recordedAt,
             ): OdometerLog {
                 $entryType = $validated['entry_type'];
+                $vehicleId = $safariAllocation->vehicle_id;
 
                 // Decide which Fuel log this reading belongs to:
                 //  - Fuel rows open their own cycle (fuel_log_id stays null).
-                //  - Other rows attach to the latest Fuel log on this trip
-                //    whose recorded_at is <= this reading.
+                //  - Other rows attach to the latest Fuel log for the same
+                //    vehicle whose recorded_at is <= this reading.
                 $fuelLogId = null;
                 if ($entryType !== 'Fuel') {
                     $fuelLogId = OdometerLog::query()
-                        ->where('safari_allocation_id', $safariAllocation->id)
+                        ->whereHas('safariAllocation', function ($query) use ($vehicleId): void {
+                            $query->where('vehicle_id', $vehicleId);
+                        })
                         ->where('entry_type', 'Fuel')
                         ->where('recorded_at', '<=', $recordedAt)
                         ->orderByDesc('recorded_at')
@@ -143,27 +146,40 @@ class OdometerLogController extends Controller
                 ]);
 
                 if ($entryType === 'Fuel') {
-                    // Closing the previous open tank cycle on this trip.
-                    OdometerLog::query()
-                        ->where('safari_allocation_id', $safariAllocation->id)
+                    // Closing the previous open tank cycle for the same
+                    // vehicle, even if the fuel-up happened on a different
+                    // safari allocation / trip.
+                    $previousFuel = OdometerLog::query()
+                        ->whereHas('safariAllocation', function ($query) use ($vehicleId): void {
+                            $query->where('vehicle_id', $vehicleId);
+                        })
                         ->where('entry_type', 'Fuel')
                         ->whereNull('closed_at')
                         ->where('id', '!=', $log->id)
                         ->where('recorded_at', '<', $recordedAt)
                         ->orderByDesc('recorded_at')
                         ->orderByDesc('id')
-                        ->limit(1)
-                        ->update(['closed_at' => $recordedAt]);
+                        ->first();
 
-                    // Adopt any orphan readings recorded between the
-                    // previous fuel-up and this one that aren't yet linked
-                    // to a fuel cycle (handles back-dated entries).
-                    OdometerLog::query()
-                        ->where('safari_allocation_id', $safariAllocation->id)
+                    if ($previousFuel !== null) {
+                        $previousFuel->forceFill(['closed_at' => $recordedAt])->save();
+                    }
+
+                    // Adopt any orphan readings that fall between the prior
+                    // fuel-up and this one, regardless of trip boundary.
+                    $orphanQuery = OdometerLog::query()
+                        ->whereHas('safariAllocation', function ($query) use ($vehicleId): void {
+                            $query->where('vehicle_id', $vehicleId);
+                        })
                         ->where('entry_type', '!=', 'Fuel')
                         ->whereNull('fuel_log_id')
-                        ->where('recorded_at', '<=', $recordedAt)
-                        ->update(['fuel_log_id' => $log->id]);
+                        ->where('recorded_at', '<=', $recordedAt);
+
+                    if ($previousFuel !== null && $previousFuel->recorded_at !== null) {
+                        $orphanQuery->where('recorded_at', '>', $previousFuel->recorded_at);
+                    }
+
+                    $orphanQuery->update(['fuel_log_id' => $log->id]);
                 }
 
                 return $log;
