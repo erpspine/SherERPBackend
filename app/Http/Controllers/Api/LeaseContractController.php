@@ -54,6 +54,7 @@ class LeaseContractController extends Controller
         $contract = DB::transaction(function () use ($validated): LeaseContract {
             $duration = $this->calcDays($validated['startDate'], $validated['endDate']);
             $leaseType = $this->resolveLeaseType($duration);
+            $vehicleIds = $validated['vehicleIds'] ?? [];
 
             $contract = LeaseContract::create([
                 'client_name' => $validated['clientName'],
@@ -66,17 +67,19 @@ class LeaseContractController extends Controller
                 'status' => 'Active',
             ]);
 
-            $contract->vehicles()->sync($validated['vehicleIds']);
+            $contract->vehicles()->sync($vehicleIds);
 
-            Vehicle::query()->whereIn('id', $validated['vehicleIds'])->update([
-                'status' => 'On Lease',
-                'lease_type' => $leaseType,
-                'lease_start_date' => $validated['startDate'],
-                'lease_end_date' => $validated['endDate'],
-                'lease_client_name' => $validated['clientName'],
-                'lease_monthly_rate' => $validated['monthlyRate'] ?? null,
-                'lease_notes' => $validated['notes'] ?? null,
-            ]);
+            if ($vehicleIds !== []) {
+                Vehicle::query()->whereIn('id', $vehicleIds)->update([
+                    'status' => 'On Lease',
+                    'lease_type' => $leaseType,
+                    'lease_start_date' => $validated['startDate'],
+                    'lease_end_date' => $validated['endDate'],
+                    'lease_client_name' => $validated['clientName'],
+                    'lease_monthly_rate' => $validated['monthlyRate'] ?? null,
+                    'lease_notes' => $validated['notes'] ?? null,
+                ]);
+            }
 
             return $contract;
         });
@@ -98,6 +101,7 @@ class LeaseContractController extends Controller
         DB::transaction(function () use ($validated, $leaseContract): void {
             $duration = $this->calcDays($validated['startDate'], $validated['endDate']);
             $leaseType = $this->resolveLeaseType($duration);
+            $vehicleIds = $validated['vehicleIds'] ?? [];
 
             $oldVehicleIds = $leaseContract->vehicles()->pluck('vehicles.id')->all();
 
@@ -112,9 +116,9 @@ class LeaseContractController extends Controller
                 'status' => $validated['status'] ?? $leaseContract->status,
             ]);
 
-            $leaseContract->vehicles()->sync($validated['vehicleIds']);
+            $leaseContract->vehicles()->sync($vehicleIds);
 
-            $removed = array_values(array_diff($oldVehicleIds, $validated['vehicleIds']));
+            $removed = array_values(array_diff($oldVehicleIds, $vehicleIds));
             if ($removed !== []) {
                 Vehicle::query()->whereIn('id', $removed)->update([
                     'status' => 'Available',
@@ -127,8 +131,8 @@ class LeaseContractController extends Controller
                 ]);
             }
 
-            if ($leaseContract->status === 'Active') {
-                Vehicle::query()->whereIn('id', $validated['vehicleIds'])->update([
+            if ($leaseContract->status === 'Active' && $vehicleIds !== []) {
+                Vehicle::query()->whereIn('id', $vehicleIds)->update([
                     'status' => 'On Lease',
                     'lease_type' => $leaseType,
                     'lease_start_date' => $validated['startDate'],
@@ -224,7 +228,7 @@ class LeaseContractController extends Controller
             'clientName' => ['required', 'string', 'max:150'],
             'startDate' => ['required', 'date_format:Y-m-d'],
             'endDate' => ['required', 'date_format:Y-m-d', 'after_or_equal:startDate'],
-            'vehicleIds' => ['required', 'array', 'min:1'],
+            'vehicleIds' => ['nullable', 'array'],
             'vehicleIds.*' => ['integer', 'exists:vehicles,id'],
             'monthlyRate' => ['nullable', 'numeric', 'min:0'],
             'notes' => ['nullable', 'string', 'max:2000'],
