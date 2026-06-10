@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\JobCard;
 use App\Models\Lead;
 use App\Models\ProformaInvoice;
+use App\Models\ProformaInvoicePayment;
 use App\Models\Quotation;
 use App\Models\SafariAllocation;
 use App\Models\Setting;
@@ -23,7 +24,7 @@ class ProformaInvoiceController extends Controller
 {
     public function index(): JsonResponse
     {
-        $proformaInvoices = ProformaInvoice::query()->with(['lineItems', 'lead', 'quotation'])->latest('id')->get();
+        $proformaInvoices = ProformaInvoice::query()->with(['lineItems', 'lead', 'quotation', 'payments'])->latest('id')->get();
 
         return response()->json([
             'message' => 'Proforma invoices fetched successfully.',
@@ -35,11 +36,88 @@ class ProformaInvoiceController extends Controller
 
     public function show(ProformaInvoice $proformaInvoice): JsonResponse
     {
-        $proformaInvoice->load(['lineItems', 'lead', 'quotation']);
+        $proformaInvoice->load(['lineItems', 'lead', 'quotation', 'payments']);
 
         return response()->json([
             'message' => 'Proforma invoice fetched successfully.',
             'proformaInvoice' => $this->transformProformaInvoice($proformaInvoice),
+        ]);
+    }
+
+    public function piPayments(ProformaInvoice $proformaInvoice): JsonResponse
+    {
+        $proformaInvoice->load('payments');
+
+        return response()->json([
+            'message' => 'Proforma invoice payments fetched successfully.',
+            'proformaInvoiceId' => $proformaInvoice->id,
+            'payments' => $proformaInvoice->payments
+                ->sortBy('date')
+                ->values()
+                ->map(fn($payment): array => $this->transformPayment($payment))
+                ->all(),
+        ]);
+    }
+
+    public function addPayment(Request $request, ProformaInvoice $proformaInvoice): JsonResponse
+    {
+        $validated = $request->validate([
+            'date'      => ['required', 'date'],
+            'amount'    => ['required', 'numeric', 'min:0.01'],
+            'method'    => ['required', 'string', 'max:100'],
+            'reference' => ['nullable', 'string', 'max:120'],
+            'notes'     => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        $proformaInvoice->payments()->create([
+            'date'      => $validated['date'],
+            'amount'    => $validated['amount'],
+            'method'    => $validated['method'],
+            'reference' => $validated['reference'] ?? null,
+            'notes'     => $validated['notes'] ?? null,
+        ]);
+
+        $proformaInvoice->load('payments');
+        $paidAmount = (float) $proformaInvoice->payments->sum('amount');
+        $total      = (float) $proformaInvoice->total;
+
+        if ($paidAmount >= $total && $total > 0) {
+            $proformaInvoice->status = 'Paid';
+        } elseif ($paidAmount > 0) {
+            $proformaInvoice->status = 'Deposit';
+        }
+        $proformaInvoice->save();
+
+        $proformaInvoice->load(['lineItems', 'lead', 'quotation', 'payments']);
+
+        return response()->json([
+            'message'         => 'Payment recorded successfully.',
+            'proformaInvoice' => $this->transformProformaInvoice($proformaInvoice),
+        ], 201);
+    }
+
+    public function allPiPayments(): JsonResponse
+    {
+        $payments = ProformaInvoicePayment::query()
+            ->with('proformaInvoice')
+            ->orderByDesc('date')
+            ->orderByDesc('id')
+            ->get();
+
+        return response()->json([
+            'message'  => 'All proforma invoice payments fetched successfully.',
+            'payments' => $payments->map(fn($payment): array => [
+                'id'                => $payment->id,
+                'proformaInvoiceId' => $payment->proforma_invoice_id,
+                'piNo'              => $payment->proformaInvoice?->proforma_number ?? '-',
+                'client'            => $payment->proformaInvoice?->client ?? '-',
+                'date'              => optional($payment->date)->format('Y-m-d'),
+                'amount'            => (float) $payment->amount,
+                'method'            => $payment->method,
+                'reference'         => $payment->reference,
+                'notes'             => $payment->notes,
+                'createdAt'         => $payment->created_at?->toISOString(),
+            ])->values(),
         ]);
     }
 
@@ -585,6 +663,47 @@ class ProformaInvoiceController extends Controller
             'status' => $proformaInvoice->status,
             'createdAt' => $proformaInvoice->created_at?->toISOString(),
             'updatedAt' => $proformaInvoice->updated_at?->toISOString(),
+        ] + $this->paymentSummary($proformaInvoice);
+    }
+
+    /**
+     * @return array{paidAmount: float, balance: float, payments: list<array<string, mixed>>}
+     */
+    private function paymentSummary(ProformaInvoice $proformaInvoice): array
+    {
+        $payments = $proformaInvoice->relationLoaded('payments')
+            ? $proformaInvoice->payments
+            : $proformaInvoice->payments()->get();
+
+        $paidAmount = (float) $payments->sum('amount');
+        $total      = (float) $proformaInvoice->total;
+
+        return [
+            'paidAmount' => $paidAmount,
+            'balance'    => max(0.0, $total - $paidAmount),
+            'payments'   => $payments
+                ->sortBy('date')
+                ->values()
+                ->map(fn($p): array => $this->transformPayment($p))
+                ->all(),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function transformPayment(ProformaInvoicePayment $payment): array
+    {
+        return [
+            'id'                => $payment->id,
+            'proformaInvoiceId' => $payment->proforma_invoice_id,
+            'date'              => optional($payment->date)->format('Y-m-d'),
+            'amount'            => (float) $payment->amount,
+            'method'            => $payment->method,
+            'reference'         => $payment->reference,
+            'notes'             => $payment->notes,
+            'createdAt'         => $payment->created_at?->toISOString(),
+            'updatedAt'         => $payment->updated_at?->toISOString(),
         ];
     }
 

@@ -23,6 +23,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'exchange_rate',
     'status',
 ])]
+
+// Valid statuses: Converted, Sent, Confirmed, Partially Allocated, Allocated, Deposit, Paid
 class ProformaInvoice extends Model
 {
     public function quotation(): BelongsTo
@@ -38,6 +40,11 @@ class ProformaInvoice extends Model
     public function lineItems(): HasMany
     {
         return $this->hasMany(\App\Models\ProformaInvoiceLineItem::class);
+    }
+
+    public function payments(): HasMany
+    {
+        return $this->hasMany(\App\Models\ProformaInvoicePayment::class);
     }
 
     /**

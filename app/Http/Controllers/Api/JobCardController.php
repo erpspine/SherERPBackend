@@ -11,6 +11,7 @@ use App\Models\SafariAllocation;
 use App\Models\Setting;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\Response;
@@ -79,10 +80,13 @@ class JobCardController extends Controller
             ], 422);
         }
 
-        if (! $this->isSafariType($type) && ! $this->isLeaseType($type) && empty($validated['vehicleId'])) {
-            return response()->json([
-                'message' => 'vehicleId is required for non-Safari job cards.',
-            ], 422);
+        if ($this->isLeaseType($type) && ! empty($validated['leaseAllocationId'])) {
+            $duplicate = $this->findDuplicateLeaseAllocationJobCard((int) $validated['leaseAllocationId']);
+            if ($duplicate !== null) {
+                return response()->json([
+                    'message' => 'A job card already exists for this lease allocation (' . ($duplicate->job_card_no ?: ('ID ' . $duplicate->id)) . ').',
+                ], 422);
+            }
         }
 
         $payload = $this->applyTypeSpecificPayload($validated, $type, null);
@@ -125,10 +129,16 @@ class JobCardController extends Controller
             ], 422);
         }
 
-        if (! $this->isSafariType($type) && ! $this->isLeaseType($type) && empty($vehicleId)) {
-            return response()->json([
-                'message' => 'vehicleId is required for non-Safari job cards.',
-            ], 422);
+        if ($this->isLeaseType($type) && ! empty($leaseAllocationId)) {
+            $duplicate = $this->findDuplicateLeaseAllocationJobCard(
+                (int) $leaseAllocationId,
+                (int) $jobCard->id,
+            );
+            if ($duplicate !== null) {
+                return response()->json([
+                    'message' => 'A job card already exists for this lease allocation (' . ($duplicate->job_card_no ?: ('ID ' . $duplicate->id)) . ').',
+                ], 422);
+            }
         }
 
         $payload = $this->applyTypeSpecificPayload($validated, $type, $jobCard);
@@ -244,7 +254,7 @@ class JobCardController extends Controller
 
         return [
             'leadId' => $leadIdRules,
-            'vehicleId' => [$required, 'nullable', 'integer', 'exists:vehicles,id'],
+            'vehicleId' => ['sometimes', 'nullable', 'integer', 'exists:vehicles,id'],
             'leaseContractId' => ['sometimes', 'nullable', 'integer', 'exists:lease_contracts,id'],
             'leaseAllocationId' => ['sometimes', 'nullable', 'integer', 'exists:lease_allocations,id'],
             'type' => [$required, 'string', Rule::in(self::TYPES)],
@@ -331,9 +341,9 @@ class JobCardController extends Controller
             'guide_language' => $jobCard?->guide_language,
         ];
 
-        if ($this->isSafariType($type)) {
-            $manualRouteItinerary = $this->normalizeRouteItinerary($validated['routeItinerary'] ?? null);
+        $manualRouteItinerary = $this->normalizeRouteItinerary($validated['routeItinerary'] ?? null);
 
+        if ($this->isSafariType($type)) {
             $payload['route_itinerary'] = ! empty($manualRouteItinerary)
                 ? $manualRouteItinerary
                 : $this->resolveSafariItinerary(
@@ -357,7 +367,9 @@ class JobCardController extends Controller
             $payload['driver_details'] = null;
         } elseif ($this->isLeaseType($type)) {
             $payload['lead_id'] = null;
-            $payload['route_itinerary'] = null;
+            $payload['route_itinerary'] = ! empty($manualRouteItinerary)
+                ? $manualRouteItinerary
+                : $this->normalizeRouteItinerary($jobCard?->route_itinerary);
 
             $allocation = $payload['lease_allocation_id']
                 ? LeaseAllocation::query()->with(['vehicle', 'driver', 'leaseContract'])->find($payload['lease_allocation_id'])
@@ -381,8 +393,18 @@ class JobCardController extends Controller
 
                 $itineraryText = trim((string) ($allocation->itinerary ?? ''));
                 if ($itineraryText !== '') {
-                    $payload['route_summary'] = $itineraryText;
-                    $payload['additional_details'] = $itineraryText;
+                    // Keep route_summary short enough for DB column constraints.
+                    if (empty($payload['route_summary'])) {
+                        $payload['route_summary'] = Str::limit($itineraryText, 240, '...');
+                    }
+
+                    if (empty($payload['additional_details'])) {
+                        $payload['additional_details'] = $itineraryText;
+                    }
+                }
+
+                if (empty($payload['route_itinerary'])) {
+                    $payload['route_itinerary'] = $this->normalizeRouteItinerary($allocation->itinerary_items);
                 }
 
                 $contract = $allocation->leaseContract;
@@ -459,6 +481,19 @@ class JobCardController extends Controller
     private function isLeaseType(?string $type): bool
     {
         return is_string($type) && strtolower(trim($type)) === 'long term lease';
+    }
+
+    private function findDuplicateLeaseAllocationJobCard(int $leaseAllocationId, ?int $ignoreJobCardId = null): ?JobCard
+    {
+        $query = JobCard::query()
+            ->where('lease_allocation_id', $leaseAllocationId)
+            ->whereRaw('LOWER(TRIM(type)) = ?', ['long term lease']);
+
+        if ($ignoreJobCardId !== null) {
+            $query->where('id', '!=', $ignoreJobCardId);
+        }
+
+        return $query->first();
     }
 
     /**
@@ -616,7 +651,7 @@ class JobCardController extends Controller
                 }
 
                 $date = trim((string) ($item['date'] ?? $item['dayDate'] ?? $item['dayTitle'] ?? ''));
-                $description = trim((string) ($item['dayDescription'] ?? $item['dateDescription'] ?? $item['description'] ?? ''));
+                $description = trim((string) ($item['dayDescription'] ?? $item['dateDescription'] ?? $item['description'] ?? $item['details'] ?? ''));
                 $allowanceRaw = $item['allowancePerDay'] ?? $item['allowance_per_day'] ?? null;
                 $allowance = null;
                 if ($allowanceRaw !== null && $allowanceRaw !== '') {

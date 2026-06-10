@@ -20,6 +20,8 @@ use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use Spatie\Permission\Models\Role;
+use Spatie\Permission\PermissionRegistrar;
 
 class UserController extends Controller
 {
@@ -410,16 +412,53 @@ class UserController extends Controller
     public function rolePermissions(): JsonResponse
     {
         $allPermissions = config('access.permissions', []);
-        $roles = config('access.roles', []);
+        $roleNames = $this->availableRoles();
+
+        $roles = collect($roleNames)
+            ->map(function (string $roleName) {
+                $role = Role::findOrCreate($roleName, 'web');
+                $role->loadMissing('permissions:id,name');
+
+                return [
+                    'name' => $roleName,
+                    'permissions' => $role->permissions->pluck('name')->values(),
+                ];
+            })
+            ->values();
 
         return response()->json([
-            'roles' => collect($roles)
-                ->map(fn (array $permissions, string $name): array => [
-                    'name' => $name,
-                    'permissions' => $permissions === ['*'] ? $allPermissions : $permissions,
-                ])
-                ->values(),
+            'roles' => $roles,
             'permissions' => $allPermissions,
+        ]);
+    }
+
+    public function updateRolePermissions(Request $request, string $role): JsonResponse
+    {
+        $availableRoles = $this->availableRoles();
+        if (! in_array($role, $availableRoles, true)) {
+            throw ValidationException::withMessages([
+                'role' => ['Invalid role selected.'],
+            ]);
+        }
+
+        $allowedPermissions = config('access.permissions', []);
+        $validated = $request->validate([
+            'permissions' => ['required', 'array'],
+            'permissions.*' => ['string', Rule::in($allowedPermissions)],
+        ]);
+
+        $permissions = array_values(array_unique($validated['permissions'] ?? []));
+
+        $targetRole = Role::findOrCreate($role, 'web');
+        $targetRole->syncPermissions($permissions);
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        return response()->json([
+            'message' => 'Role permissions updated successfully.',
+            'role' => [
+                'name' => $targetRole->name,
+                'permissions' => $targetRole->permissions()->pluck('name')->values(),
+            ],
         ]);
     }
 

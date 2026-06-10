@@ -47,6 +47,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::get('/roles', [UserController::class, 'roles'])->middleware('permission:users.view');
     Route::get('/permissions', [UserController::class, 'permissions'])->middleware('permission:users.view');
     Route::get('/roles/permissions', [UserController::class, 'rolePermissions'])->middleware('permission:users.view');
+    Route::patch('/roles/{role}/permissions', [UserController::class, 'updateRolePermissions'])->middleware('permission:users.update');
     Route::post('/logout', [UserController::class, 'logout']);
     Route::post('/change-password', [UserController::class, 'changePassword']);
 
@@ -112,6 +113,9 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('/proforma-invoices/{proformaInvoice}/confirm', [ProformaInvoiceController::class, 'confirm'])->middleware('permission:proforma-invoices.view');
     Route::post('/proforma-invoices/{proformaInvoice}/currency', [ProformaInvoiceController::class, 'updateCurrency'])->middleware('permission:proforma-invoices.view');
     Route::post('/proforma-invoices/{proformaInvoice}/allocate-vehicles', [ProformaInvoiceController::class, 'allocateVehicles'])->middleware('permission:proforma-invoices.view');
+    Route::get('/proforma-invoices/{proformaInvoice}/payments', [ProformaInvoiceController::class, 'piPayments'])->middleware('permission:invoice-payments.view');
+    Route::post('/proforma-invoices/{proformaInvoice}/payments', [ProformaInvoiceController::class, 'addPayment'])->middleware('permission:invoice-payments.create');
+    Route::get('/proforma-invoice-payments', [ProformaInvoiceController::class, 'allPiPayments'])->middleware('permission:invoice-payments.view');
 
     Route::get('/invoices', [InvoiceController::class, 'index'])->middleware('permission:invoices.view');
     Route::get('/invoices/{invoice}', [InvoiceController::class, 'show'])->middleware('permission:invoices.view');
