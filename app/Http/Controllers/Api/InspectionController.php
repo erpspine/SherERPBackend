@@ -69,6 +69,10 @@ class InspectionController extends Controller
             'checklistType' => ['required', Rule::in(self::INSPECTION_TYPES)],
             'lead.id' => ['required', 'exists:leads,id'],
             'vehicle.id' => ['required', 'exists:vehicles,id'],
+            'parking_location' => ['nullable', 'string', 'max:255'],
+            'parkingLocation' => ['nullable', 'string', 'max:255'],
+            'parked_location' => ['nullable', 'string', 'max:255'],
+            'parkedLocation' => ['nullable', 'string', 'max:255'],
             'odometer' => ['nullable', 'integer', 'min:0'],
             'odometer_reading' => ['nullable', 'integer', 'min:0'],
             'odometer_out' => ['nullable', 'integer', 'min:0'],
@@ -98,12 +102,23 @@ class InspectionController extends Controller
             ], 422);
         }
 
+        if ((string) $validated['type'] === 'post_departure' && ! $this->hasPreDepartureInspection(
+            leadId: (int) $validated['lead']['id'],
+            vehicleId: (int) $validated['vehicle']['id'],
+        )) {
+            return response()->json([
+                'message' => 'Pre checklist must be completed before post checklist for this lead and vehicle.',
+            ], 422);
+        }
+
         $odometerPayload = $this->resolveOdometerColumns(
             validated: $validated,
             type: (string) $validated['type'],
         );
 
-        $inspection = DB::transaction(function () use ($request, $validated, $odometerPayload): Inspection {
+        $parkingLocation = $this->resolveParkingLocation($request, $validated);
+
+        $inspection = DB::transaction(function () use ($request, $validated, $odometerPayload, $parkingLocation): Inspection {
             $inspection = Inspection::create([
                 'user_id' => $request->user()->id,
                 'lead_id' => $validated['lead']['id'],
@@ -111,6 +126,7 @@ class InspectionController extends Controller
                 'type' => $validated['type'],
                 'odometer_out' => $odometerPayload['odometer_out'],
                 'odometer_in' => $odometerPayload['odometer_in'],
+                'parking_location' => $parkingLocation,
                 'remarks' => $validated['remarks'] ?? null,
             ]);
 
@@ -162,6 +178,10 @@ class InspectionController extends Controller
         $validated = $request->validate([
             'type' => ['sometimes', Rule::in(self::INSPECTION_TYPES)],
             'remarks' => ['nullable', 'string'],
+            'parking_location' => ['nullable', 'string', 'max:255'],
+            'parkingLocation' => ['nullable', 'string', 'max:255'],
+            'parked_location' => ['nullable', 'string', 'max:255'],
+            'parkedLocation' => ['nullable', 'string', 'max:255'],
             'odometer' => ['nullable', 'integer', 'min:0'],
             'odometer_reading' => ['nullable', 'integer', 'min:0'],
             'odometer_out' => ['nullable', 'integer', 'min:0'],
@@ -184,6 +204,16 @@ class InspectionController extends Controller
             ], 422);
         }
 
+        if ($targetType === 'post_departure' && $inspection->type !== 'post_departure' && ! $this->hasPreDepartureInspection(
+            leadId: (int) $inspection->lead_id,
+            vehicleId: (int) $inspection->vehicle_id,
+            ignoreInspectionId: (int) $inspection->id,
+        )) {
+            return response()->json([
+                'message' => 'Pre checklist must be completed before post checklist for this lead and vehicle.',
+            ], 422);
+        }
+
         $odometerPayload = $this->resolveOdometerColumns(
             validated: $validated,
             type: $targetType,
@@ -191,6 +221,9 @@ class InspectionController extends Controller
         );
 
         $updatePayload = array_merge($validated, $odometerPayload);
+        if ($request->hasAny(['parking_location', 'parkingLocation', 'parked_location', 'parkedLocation'])) {
+            $updatePayload['parking_location'] = $this->resolveParkingLocation($request, $validated);
+        }
 
         DB::transaction(function () use ($inspection, $updatePayload, $request): void {
             $inspection->update($updatePayload);
@@ -347,6 +380,8 @@ class InspectionController extends Controller
             'odometerIn' => $inspection->odometer_in,
             'odometer_out' => $inspection->odometer_out,
             'odometer_in' => $inspection->odometer_in,
+            'parkingLocation' => $inspection->parking_location,
+            'parking_location' => $inspection->parking_location,
             'items' => $inspection->items->map(fn($item): array => [
                 'id' => $item->id,
                 'checklistId' => $item->checklist_id,
@@ -540,6 +575,43 @@ class InspectionController extends Controller
         }
 
         return $query->first();
+    }
+
+    private function hasPreDepartureInspection(
+        int $leadId,
+        int $vehicleId,
+        ?int $ignoreInspectionId = null,
+    ): bool {
+        $query = Inspection::query()
+            ->where('lead_id', $leadId)
+            ->where('vehicle_id', $vehicleId)
+            ->where('type', 'pre_departure');
+
+        if ($ignoreInspectionId !== null) {
+            $query->where('id', '!=', $ignoreInspectionId);
+        }
+
+        return $query->exists();
+    }
+
+    /**
+     * @param array<string, mixed> $validated
+     */
+    private function resolveParkingLocation(Request $request, array $validated): ?string
+    {
+        foreach (['parking_location', 'parkingLocation', 'parked_location', 'parkedLocation'] as $key) {
+            if (array_key_exists($key, $validated)) {
+                $value = trim((string) ($validated[$key] ?? ''));
+                return $value === '' ? null : $value;
+            }
+
+            if ($request->exists($key)) {
+                $value = trim((string) $request->input($key));
+                return $value === '' ? null : $value;
+            }
+        }
+
+        return null;
     }
 
     private function syncVehicleAfterPostDeparture(Inspection $inspection, Request $request): void

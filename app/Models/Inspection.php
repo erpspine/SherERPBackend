@@ -15,6 +15,7 @@ class Inspection extends Model
         'type',
         'odometer_out',
         'odometer_in',
+        'parking_location',
         'remarks',
     ];
 
