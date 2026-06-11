@@ -7,6 +7,13 @@ use App\Models\User;
 
 class OdometerLogPolicy
 {
+    private function isReadOnlyRole(User $user): bool
+    {
+        return $user->hasRole('admin')
+            || $user->hasRole('operations')
+            || $user->hasRole('operator');
+    }
+
     public function viewAny(User $user): bool
     {
         return $user->can('odometer-logs.view');
@@ -28,11 +35,19 @@ class OdometerLogPolicy
 
     public function create(User $user): bool
     {
+        if ($this->isReadOnlyRole($user)) {
+            return false;
+        }
+
         return $user->can('odometer-logs.create');
     }
 
     public function update(User $user, OdometerLog $odometerLog): bool
     {
+        if ($this->isReadOnlyRole($user)) {
+            return false;
+        }
+
         if (! $user->can('odometer-logs.update')) {
             return false;
         }
@@ -48,6 +63,10 @@ class OdometerLogPolicy
 
     public function delete(User $user, OdometerLog $odometerLog): bool
     {
+        if ($this->isReadOnlyRole($user)) {
+            return false;
+        }
+
         return $user->can('odometer-logs.delete');
     }
 }

@@ -111,14 +111,16 @@ class UserController extends Controller
     public function forgotPassword(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'email' => ['required', 'email'],
+            'identifier' => ['required', 'string', 'max:255'],
         ]);
 
-        $user = User::query()->where('email', $validated['email'])->first();
+        $identifier = trim((string) $validated['identifier']);
+        $user = $this->resolveUserByIdentifier($identifier);
+        $looksLikeEmail = filter_var($identifier, FILTER_VALIDATE_EMAIL) !== false;
 
         if (! $user) {
             return response()->json([
-                'message' => 'If the email exists, a reset token has been generated.',
+                'message' => 'If the account exists, a reset token has been sent.',
             ]);
         }
 
@@ -126,23 +128,68 @@ class UserController extends Controller
         $passwordBroker = Password::broker();
         $token = $passwordBroker->createToken($user);
 
+        $smsSent = false;
+        $emailSent = false;
+
+        if (! $looksLikeEmail && $user->phone) {
+            $smsBody = implode("\n", [
+                'Your password reset code is: ' . $token,
+                'Use this code in the app to set a new password.',
+            ]);
+            $smsSent = app(SmsService::class)->send($user->phone, $smsBody);
+        }
+
+        if ($looksLikeEmail && $user->email) {
+            try {
+                Mail::raw(
+                    "Your password reset code is: {$token}\nUse this code in the app to set a new password.",
+                    function ($message) use ($user): void {
+                        $message->to($user->email)
+                            ->subject(config('app.name', 'SHER ERP') . ' Password Reset Code');
+                    }
+                );
+                $emailSent = true;
+            } catch (\Throwable) {
+                // Keep the endpoint resilient even when mail transport is unavailable.
+                $emailSent = false;
+            }
+        }
+
         return response()->json([
-            'message' => 'Password reset token generated successfully.',
-            'resetToken' => $token,
+            'message' => ($looksLikeEmail ? $emailSent : $smsSent)
+                ? 'Password reset token sent successfully.'
+                : 'Password reset token generated successfully.',
+            'channel' => $looksLikeEmail ? 'email' : 'sms',
+            // Fallback for environments where mail/SMS transport is not configured.
+            'resetToken' => (($looksLikeEmail && ! $emailSent) || (! $looksLikeEmail && ! $smsSent))
+                ? $token
+                : null,
         ]);
     }
 
     public function resetPassword(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'email' => ['required', 'email'],
+            'identifier' => ['required', 'string', 'max:255'],
             'token' => ['required', 'string'],
             'password' => ['required', 'string', 'min:8', 'confirmed'],
         ]);
 
+        $identifier = trim((string) $validated['identifier']);
+        $user = $this->resolveUserByIdentifier($identifier);
+
+        if (! $user || ! $user->email) {
+            return response()->json([
+                'message' => 'Unable to resolve account for password reset.',
+                'errors' => [
+                    'identifier' => ['Account not found for the provided email or phone number.'],
+                ],
+            ], 422);
+        }
+
         $status = Password::broker()->reset(
             [
-                'email' => $validated['email'],
+                'email' => $user->email,
                 'token' => $validated['token'],
                 'password' => $validated['password'],
                 'password_confirmation' => $request->input('password_confirmation'),
@@ -166,6 +213,35 @@ class UserController extends Controller
         return response()->json([
             'message' => 'Password reset successfully.',
         ]);
+    }
+
+    private function resolveUserByIdentifier(string $identifier): ?User
+    {
+        $trimmed = trim($identifier);
+        if ($trimmed === '') {
+            return null;
+        }
+
+        if (filter_var($trimmed, FILTER_VALIDATE_EMAIL) !== false) {
+            return User::query()
+                ->whereRaw('LOWER(email) = ?', [Str::lower($trimmed)])
+                ->first();
+        }
+
+        $smsService = app(SmsService::class);
+        $normalizedPhone = $smsService->formatPhoneNumber($trimmed);
+
+        $candidates = array_values(array_unique(array_filter([
+            $trimmed,
+            preg_replace('/[^0-9]/', '', $trimmed) ?? '',
+            $normalizedPhone,
+        ])));
+
+        if (empty($candidates)) {
+            return null;
+        }
+
+        return User::query()->whereIn('phone', $candidates)->first();
     }
 
     public function changePassword(Request $request): JsonResponse
