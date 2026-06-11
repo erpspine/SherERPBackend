@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Invoice;
+use App\Models\InvoicePayment;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -187,6 +188,23 @@ class InvoiceController extends Controller
             'payment' => $this->transformPayment($payment),
             'invoice' => $this->transform($invoice),
         ], 201);
+    }
+
+    public function deletePayment(Invoice $invoice, InvoicePayment $payment): JsonResponse
+    {
+        if ((int) $payment->invoice_id !== (int) $invoice->id) {
+            return response()->json([
+                'message' => 'Payment does not belong to the selected invoice.',
+            ], 404);
+        }
+
+        $payment->delete();
+        $invoice->load(['proformaInvoice', 'payments']);
+
+        return response()->json([
+            'message' => 'Payment deleted successfully.',
+            'invoice' => $this->transform($invoice),
+        ]);
     }
 
     public function uploadAttachment(Request $request, Invoice $invoice): JsonResponse

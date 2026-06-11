@@ -18,6 +18,7 @@ use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\JobCardController;
 use App\Http\Controllers\Api\LeaseContractController;
 use App\Http\Controllers\Api\LeaseAllocationController;
+use App\Http\Controllers\Api\LeaseProformaInvoiceController;
 use App\Http\Controllers\Api\SafariAllocationController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\ClientController;
@@ -115,6 +116,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('/proforma-invoices/{proformaInvoice}/allocate-vehicles', [ProformaInvoiceController::class, 'allocateVehicles'])->middleware('permission:proforma-invoices.view');
     Route::get('/proforma-invoices/{proformaInvoice}/payments', [ProformaInvoiceController::class, 'piPayments'])->middleware('permission:invoice-payments.view');
     Route::post('/proforma-invoices/{proformaInvoice}/payments', [ProformaInvoiceController::class, 'addPayment'])->middleware('permission:invoice-payments.create');
+    Route::delete('/proforma-invoices/{proformaInvoice}/payments/{payment}', [ProformaInvoiceController::class, 'deletePayment'])->middleware('permission:invoice-payments.delete');
     Route::get('/proforma-invoice-payments', [ProformaInvoiceController::class, 'allPiPayments'])->middleware('permission:invoice-payments.view');
 
     Route::get('/invoices', [InvoiceController::class, 'index'])->middleware('permission:invoices.view');
@@ -128,6 +130,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::get('/invoice-payments', [InvoiceController::class, 'allPayments'])->middleware('permission:invoice-payments.view');
     Route::get('/invoices/{invoice}/payments', [InvoiceController::class, 'payments'])->middleware('permission:invoice-payments.view');
     Route::post('/invoices/{invoice}/payments', [InvoiceController::class, 'addPayment'])->middleware('permission:invoice-payments.create');
+    Route::delete('/invoices/{invoice}/payments/{payment}', [InvoiceController::class, 'deletePayment'])->middleware('permission:invoice-payments.delete');
 
     // Company settings
     Route::get('/settings/company',  [SettingsController::class, 'showCompany'])->middleware('permission:settings.view');
@@ -215,6 +218,16 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('/lease-allocations', [LeaseAllocationController::class, 'store'])->middleware('permission:vehicles.create');
     Route::put('/lease-allocations/{leaseAllocation}', [LeaseAllocationController::class, 'update'])->middleware('permission:vehicles.update');
     Route::delete('/lease-allocations/{leaseAllocation}', [LeaseAllocationController::class, 'destroy'])->middleware('permission:vehicles.delete');
+
+    // Lease Proforma Invoices
+    Route::get('/lease-proforma-invoices', [LeaseProformaInvoiceController::class, 'index'])->middleware('permission:proforma-invoices.view');
+    Route::get('/lease-proforma-invoices/{leaseProformaInvoice}', [LeaseProformaInvoiceController::class, 'show'])->middleware('permission:proforma-invoices.view');
+    Route::get('/lease-proforma-invoices/{leaseProformaInvoice}/pdf', [LeaseProformaInvoiceController::class, 'pdf'])->middleware('permission:proforma-invoices.view');
+    Route::post('/lease-proforma-invoices', [LeaseProformaInvoiceController::class, 'store'])->middleware('permission:proforma-invoices.create');
+    Route::put('/lease-proforma-invoices/{leaseProformaInvoice}', [LeaseProformaInvoiceController::class, 'update'])->middleware('permission:proforma-invoices.create');
+    Route::delete('/lease-proforma-invoices/{leaseProformaInvoice}', [LeaseProformaInvoiceController::class, 'destroy'])->middleware('permission:proforma-invoices.create');
+    Route::post('/lease-proforma-invoices/{leaseProformaInvoice}/payments', [LeaseProformaInvoiceController::class, 'addPayment'])->middleware('permission:invoice-payments.create');
+    Route::delete('/lease-proforma-invoices/{leaseProformaInvoice}/payments/{payment}', [LeaseProformaInvoiceController::class, 'deletePayment'])->middleware('permission:invoice-payments.delete');
 
     // Odometer Logs – per trip (safari allocation) reading history captured
     // by drivers. Idempotent on client_id so the offline outbox can retry.

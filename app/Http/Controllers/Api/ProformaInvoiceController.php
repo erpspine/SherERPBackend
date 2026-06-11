@@ -96,6 +96,37 @@ class ProformaInvoiceController extends Controller
         ], 201);
     }
 
+    public function deletePayment(ProformaInvoice $proformaInvoice, ProformaInvoicePayment $payment): JsonResponse
+    {
+        if ((int) $payment->proforma_invoice_id !== (int) $proformaInvoice->id) {
+            return response()->json([
+                'message' => 'Payment does not belong to the selected proforma invoice.',
+            ], 404);
+        }
+
+        $payment->delete();
+
+        $proformaInvoice->load('payments');
+        $paidAmount = (float) $proformaInvoice->payments->sum('amount');
+        $total = (float) $proformaInvoice->total;
+
+        if ($paidAmount >= $total && $total > 0) {
+            $proformaInvoice->status = 'Paid';
+        } elseif ($paidAmount > 0) {
+            $proformaInvoice->status = 'Deposit';
+        } elseif (in_array((string) $proformaInvoice->status, ['Deposit', 'Paid'], true)) {
+            $proformaInvoice->status = 'Confirmed';
+        }
+
+        $proformaInvoice->save();
+        $proformaInvoice->load(['lineItems', 'lead', 'quotation', 'payments']);
+
+        return response()->json([
+            'message' => 'Payment deleted successfully.',
+            'proformaInvoice' => $this->transformProformaInvoice($proformaInvoice),
+        ]);
+    }
+
     public function allPiPayments(): JsonResponse
     {
         $payments = ProformaInvoicePayment::query()

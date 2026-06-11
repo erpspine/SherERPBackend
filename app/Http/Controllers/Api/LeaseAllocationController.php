@@ -47,6 +47,7 @@ class LeaseAllocationController extends Controller
 
         $allocation = LeaseAllocation::create([
             'lease_contract_id' => $validated['leaseContractId'],
+            'group_name' => $validated['groupName'] ?? null,
             'vehicle_id' => $validated['vehicleId'],
             'driver_id' => $validated['driverId'] ?? null,
             'start_date' => $validated['startDate'],
@@ -72,6 +73,7 @@ class LeaseAllocationController extends Controller
 
         $leaseAllocation->update([
             'lease_contract_id' => $validated['leaseContractId'],
+            'group_name' => $validated['groupName'] ?? null,
             'vehicle_id' => $validated['vehicleId'],
             'driver_id' => $validated['driverId'] ?? null,
             'start_date' => $validated['startDate'],
@@ -104,6 +106,7 @@ class LeaseAllocationController extends Controller
     {
         $validated = $request->validate([
             'leaseContractId' => ['required', 'integer', 'exists:lease_contracts,id'],
+            'groupName' => ['nullable', 'string', 'max:150'],
             'vehicleId' => ['required', 'integer', 'exists:vehicles,id'],
             'driverId' => ['nullable', 'integer', 'exists:users,id'],
             'startDate' => ['required', 'date_format:Y-m-d'],
@@ -155,9 +158,11 @@ class LeaseAllocationController extends Controller
         return [
             'id' => $allocation->id,
             'leaseContractId' => $allocation->lease_contract_id,
+            'groupName' => $allocation->group_name,
             'contract' => $allocation->leaseContract ? [
                 'id' => $allocation->leaseContract->id,
                 'clientName' => $allocation->leaseContract->client_name,
+                'groupName' => $allocation->leaseContract->group_name,
                 'leaseType' => $allocation->leaseContract->lease_type,
                 'startDate' => optional($allocation->leaseContract->start_date)->format('Y-m-d'),
                 'endDate' => optional($allocation->leaseContract->end_date)->format('Y-m-d'),

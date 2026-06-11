@@ -58,6 +58,7 @@ class LeaseContractController extends Controller
 
             $contract = LeaseContract::create([
                 'client_name' => $validated['clientName'],
+                'group_name' => $validated['groupName'] ?? null,
                 'lease_type' => $leaseType,
                 'start_date' => $validated['startDate'],
                 'end_date' => $validated['endDate'],
@@ -107,6 +108,7 @@ class LeaseContractController extends Controller
 
             $leaseContract->update([
                 'client_name' => $validated['clientName'],
+                'group_name' => $validated['groupName'] ?? $leaseContract->group_name,
                 'lease_type' => $leaseType,
                 'start_date' => $validated['startDate'],
                 'end_date' => $validated['endDate'],
@@ -226,6 +228,7 @@ class LeaseContractController extends Controller
     {
         return $request->validate([
             'clientName' => ['required', 'string', 'max:150'],
+            'groupName' => ['nullable', 'string', 'max:150'],
             'startDate' => ['required', 'date_format:Y-m-d'],
             'endDate' => ['required', 'date_format:Y-m-d', 'after_or_equal:startDate'],
             'vehicleIds' => ['nullable', 'array'],
@@ -260,6 +263,7 @@ class LeaseContractController extends Controller
         return [
             'id' => $contract->id,
             'clientName' => $contract->client_name,
+            'groupName' => $contract->group_name,
             'leaseType' => $contract->lease_type,
             'startDate' => optional($contract->start_date)->toDateString(),
             'endDate' => optional($contract->end_date)->toDateString(),

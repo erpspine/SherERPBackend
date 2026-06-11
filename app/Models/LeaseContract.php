@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 #[Fillable([
     'client_name',
+    'group_name',
     'lease_type',
     'start_date',
     'end_date',

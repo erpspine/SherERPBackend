@@ -13,6 +13,7 @@ class LeaseAllocation extends Model
 
     protected $fillable = [
         'lease_contract_id',
+        'group_name',
         'vehicle_id',
         'driver_id',
         'start_date',
