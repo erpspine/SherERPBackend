@@ -230,18 +230,36 @@ class UserController extends Controller
 
         $smsService = app(SmsService::class);
         $normalizedPhone = $smsService->formatPhoneNumber($trimmed);
+        $digitsOnly = preg_replace('/[^0-9]/', '', $trimmed) ?? '';
 
         $candidates = array_values(array_unique(array_filter([
             $trimmed,
-            preg_replace('/[^0-9]/', '', $trimmed) ?? '',
+            $digitsOnly,
             $normalizedPhone,
+            $normalizedPhone !== '' ? '+' . $normalizedPhone : '',
         ])));
 
         if (empty($candidates)) {
             return null;
         }
 
-        return User::query()->whereIn('phone', $candidates)->first();
+        $normalizedCandidates = array_values(array_unique(array_filter(array_map(
+            static fn (string $value): string => preg_replace('/[^0-9]/', '', $value) ?? '',
+            $candidates,
+        ))));
+
+        return User::query()
+            ->where(function ($query) use ($candidates, $normalizedCandidates): void {
+                $query->whereIn('phone', $candidates);
+
+                foreach ($normalizedCandidates as $digits) {
+                    $query->orWhereRaw(
+                        "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '(', ''), ')', ''), '+', '') = ?",
+                        [$digits],
+                    );
+                }
+            })
+            ->first();
     }
 
     public function changePassword(Request $request): JsonResponse
