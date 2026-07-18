@@ -213,6 +213,9 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::delete('/lease-contracts/{leaseContract}', [LeaseContractController::class, 'destroy'])->middleware('permission:vehicles.delete');
 
     // Lease Allocations (per-trip allocations within a lease contract)
+    // Driver-safe feed: the controller always scopes this route to the
+    // authenticated user, so drivers never receive another driver's leases.
+    Route::get('/my-lease-allocations', [LeaseAllocationController::class, 'mine']);
     Route::get('/lease-allocations', [LeaseAllocationController::class, 'index'])->middleware('permission:vehicles.view');
     Route::get('/lease-allocations/{leaseAllocation}', [LeaseAllocationController::class, 'show'])->middleware('permission:vehicles.view');
     Route::post('/lease-allocations', [LeaseAllocationController::class, 'store'])->middleware('permission:vehicles.create');

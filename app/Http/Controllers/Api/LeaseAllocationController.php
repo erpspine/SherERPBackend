@@ -31,6 +31,22 @@ class LeaseAllocationController extends Controller
         ]);
     }
 
+    public function mine(Request $request): JsonResponse
+    {
+        $allocations = LeaseAllocation::query()
+            ->with(['leaseContract', 'vehicle', 'driver:id,name,email'])
+            ->where('driver_id', $request->user()->id)
+            ->orderByDesc('id')
+            ->get();
+
+        return response()->json([
+            'message' => 'Driver lease allocations fetched successfully.',
+            'allocations' => $allocations
+                ->map(fn (LeaseAllocation $allocation): array => $this->transform($allocation))
+                ->values(),
+        ]);
+    }
+
     public function show(LeaseAllocation $leaseAllocation): JsonResponse
     {
         $leaseAllocation->load(['leaseContract', 'vehicle', 'driver:id,name,email']);
@@ -157,6 +173,7 @@ class LeaseAllocationController extends Controller
     {
         return [
             'id' => $allocation->id,
+            'assignmentType' => 'long_term_lease',
             'leaseContractId' => $allocation->lease_contract_id,
             'groupName' => $allocation->group_name,
             'contract' => $allocation->leaseContract ? [
