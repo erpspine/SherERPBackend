@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use Barryvdh\DomPDF\Facade\Pdf;
 use App\Http\Controllers\Controller;
 use App\Mail\UserCreatedMail;
 use App\Mail\UserPasswordResetMail;
@@ -22,6 +23,7 @@ use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Spatie\Permission\Models\Role;
 use Spatie\Permission\PermissionRegistrar;
+use Symfony\Component\HttpFoundation\Response;
 
 class UserController extends Controller
 {
@@ -38,8 +40,11 @@ class UserController extends Controller
                 'languages_spoken',
                 'work_experience',
                 'driving_started_at',
+                'driver_license',
+                'tour_guide_license',
                 'role',
                 'status',
+                'blacklist_reason',
                 'receive_notifications',
                 'last_login_at',
                 'created_at',
@@ -308,16 +313,20 @@ class UserController extends Controller
             }],
             'languages_spoken.*' => ['nullable', 'string', 'max:50'],
             'driving_started_at' => ['nullable', 'date', 'before_or_equal:today'],
+            'driver_license' => ['nullable', 'string', 'max:120'],
+            'tour_guide_license' => ['nullable', 'string', 'max:120'],
             'role' => ['nullable', 'string', Rule::in($this->availableRoles())],
             'roles' => ['nullable', 'array', 'min:1'],
             'roles.*' => ['string', Rule::in($this->availableRoles())],
-            'status' => ['required', Rule::in(['Active', 'Inactive'])],
+            'status' => ['required', Rule::in(['Active', 'Inactive', 'Blacklisted'])],
+            'blacklist_reason' => ['nullable', 'string', 'max:2000'],
             'receive_notifications' => ['sometimes', 'boolean'],
             'send_sms' => ['sometimes', 'boolean'],
         ]);
 
         $roles = $this->extractRoleNames($validated, true);
         $primaryRole = $roles[0];
+        $this->validateBlacklistFields($validated, $primaryRole);
         $driverProfile = $this->extractDriverProfileFields($validated, $primaryRole, true);
 
         $plainPassword = Str::random(12);
@@ -332,8 +341,13 @@ class UserController extends Controller
                 'languages_spoken' => $driverProfile['languages_spoken'],
                 'work_experience' => $driverProfile['work_experience'],
                 'driving_started_at' => $driverProfile['driving_started_at'],
+                'driver_license' => $driverProfile['driver_license'],
+                'tour_guide_license' => $driverProfile['tour_guide_license'],
                 'role' => $primaryRole,
                 'status' => $validated['status'],
+                'blacklist_reason' => $validated['status'] === 'Blacklisted'
+                    ? trim((string) ($validated['blacklist_reason'] ?? ''))
+                    : null,
                 'receive_notifications' => (bool) ($validated['receive_notifications'] ?? false),
                 'password' => $plainPassword,
             ]);
@@ -385,15 +399,19 @@ class UserController extends Controller
             }],
             'languages_spoken.*' => ['nullable', 'string', 'max:50'],
             'driving_started_at' => ['nullable', 'date', 'before_or_equal:today'],
+            'driver_license' => ['nullable', 'string', 'max:120'],
+            'tour_guide_license' => ['nullable', 'string', 'max:120'],
             'role' => ['nullable', 'string', Rule::in($this->availableRoles())],
             'roles' => ['nullable', 'array', 'min:1'],
             'roles.*' => ['string', Rule::in($this->availableRoles())],
-            'status' => ['required', Rule::in(['Active', 'Inactive'])],
+            'status' => ['required', Rule::in(['Active', 'Inactive', 'Blacklisted'])],
+            'blacklist_reason' => ['nullable', 'string', 'max:2000'],
             'receive_notifications' => ['sometimes', 'boolean'],
         ]);
 
         $roles = $this->extractRoleNames($validated, false, $user);
         $primaryRole = $roles[0] ?? $user->role;
+        $this->validateBlacklistFields($validated, $primaryRole);
         $driverProfile = $this->extractDriverProfileFields($validated, $primaryRole, false, $user);
         $user->update([
             'name' => $validated['name'],
@@ -402,8 +420,13 @@ class UserController extends Controller
             'languages_spoken' => $driverProfile['languages_spoken'],
             'work_experience' => $driverProfile['work_experience'],
             'driving_started_at' => $driverProfile['driving_started_at'],
+            'driver_license' => $driverProfile['driver_license'],
+            'tour_guide_license' => $driverProfile['tour_guide_license'],
             'role' => $primaryRole,
             'status' => $validated['status'],
+            'blacklist_reason' => $validated['status'] === 'Blacklisted'
+                ? trim((string) ($validated['blacklist_reason'] ?? ''))
+                : null,
             'receive_notifications' => (bool) ($validated['receive_notifications'] ?? false),
         ]);
         $user->syncRoles($roles);
@@ -467,6 +490,48 @@ class UserController extends Controller
                 'message' => 'Password could not be reset.',
             ], 500);
         }
+    }
+
+    public function driverProfilePdf(User $user): Response
+    {
+        $this->ensureDriverProfile($user);
+
+        $pdf = Pdf::loadView('users.driver-profile-pdf', [
+            'driver' => $this->driverProfilePayload($user),
+            'company' => config('app.name', 'SHER ERP'),
+        ]);
+
+        return $pdf->download($this->driverProfileFilename($user));
+    }
+
+    public function emailDriverProfile(Request $request, User $user): JsonResponse
+    {
+        $this->ensureDriverProfile($user);
+
+        $validated = $request->validate([
+            'email' => ['required', 'email', 'max:255'],
+        ]);
+
+        $profile = $this->driverProfilePayload($user);
+        $pdf = Pdf::loadView('users.driver-profile-pdf', [
+            'driver' => $profile,
+            'company' => config('app.name', 'SHER ERP'),
+        ]);
+
+        Mail::raw(
+            "Dear Client,\n\nPlease find attached the driver profile details for {$user->name}.\n\nRegards,\n" . config('app.name', 'SHER ERP'),
+            function ($message) use ($validated, $user, $pdf): void {
+                $message->to($validated['email'])
+                    ->subject('Driver Profile - ' . $user->name)
+                    ->attachData($pdf->output(), $this->driverProfileFilename($user), [
+                        'mime' => 'application/pdf',
+                    ]);
+            }
+        );
+
+        return response()->json([
+            'message' => 'Driver profile sent successfully.',
+        ]);
     }
 
     private function buildCredentialsSmsBody(string $name, string $email, string $password, bool $isReset = false): string
@@ -606,13 +671,19 @@ class UserController extends Controller
             'languages_spoken_list' => $languages,
             'driving_started_at' => $drivingStartedAt,
             'work_experience' => $experience,
+            'driver_license' => $user->driver_license,
+            'tour_guide_license' => $user->tour_guide_license,
             'languagesSpoken' => $user->languages_spoken,
             'languagesSpokenList' => $languages,
             'drivingStartedAt' => $drivingStartedAt,
             'workExperience' => $experience,
+            'driverLicense' => $user->driver_license,
+            'tourGuideLicense' => $user->tour_guide_license,
             'role' => $user->role ?? $roles->first(),
             'roles' => $roles,
             'status' => $user->status,
+            'blacklist_reason' => $user->blacklist_reason,
+            'blacklistReason' => $user->blacklist_reason,
             'receive_notifications' => (bool) $user->receive_notifications,
             'last_login_at' => $user->last_login_at,
             'created_at' => $user->created_at,
@@ -627,7 +698,7 @@ class UserController extends Controller
 
     /**
      * @param array<string, mixed> $validated
-     * @return array{languages_spoken: ?string, work_experience: null, driving_started_at: ?string}
+    * @return array{languages_spoken: ?string, work_experience: null, driving_started_at: ?string, driver_license: ?string, tour_guide_license: ?string}
      */
     private function extractDriverProfileFields(
         array $validated,
@@ -641,9 +712,17 @@ class UserController extends Controller
         $drivingStartedAt = isset($validated['driving_started_at'])
             ? (string) $validated['driving_started_at']
             : $this->normalizeDateString($user?->driving_started_at);
+        $driverLicense = array_key_exists('driver_license', $validated)
+            ? trim((string) ($validated['driver_license'] ?? ''))
+            : ($user?->driver_license ?? null);
+        $tourGuideLicense = array_key_exists('tour_guide_license', $validated)
+            ? trim((string) ($validated['tour_guide_license'] ?? ''))
+            : ($user?->tour_guide_license ?? null);
 
         $languages = $languages === '' ? null : $languages;
         $drivingStartedAt = $drivingStartedAt === '' ? null : $drivingStartedAt;
+        $driverLicense = $driverLicense === '' ? null : $driverLicense;
+        $tourGuideLicense = $tourGuideLicense === '' ? null : $tourGuideLicense;
 
         if ($role === 'Driver') {
             if ($required && ($languages === null || $drivingStartedAt === null)) {
@@ -657,6 +736,8 @@ class UserController extends Controller
                 'languages_spoken' => $languages,
                 'work_experience' => null,
                 'driving_started_at' => $drivingStartedAt,
+                'driver_license' => $driverLicense,
+                'tour_guide_license' => $tourGuideLicense,
             ];
         }
 
@@ -664,7 +745,50 @@ class UserController extends Controller
             'languages_spoken' => null,
             'work_experience' => null,
             'driving_started_at' => null,
+            'driver_license' => null,
+            'tour_guide_license' => null,
         ];
+    }
+
+    private function ensureDriverProfile(User $user): void
+    {
+        $roles = $user->getRoleNames()->values();
+        $role = $user->role ?? $roles->first();
+
+        if ($role !== 'Driver' && ! $roles->contains('Driver')) {
+            throw ValidationException::withMessages([
+                'user' => ['Driver profile export is only available for driver users.'],
+            ]);
+        }
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function driverProfilePayload(User $user): array
+    {
+        $languages = $this->explodeLanguages($user->languages_spoken);
+        $drivingStartedAt = $this->normalizeDateString($user->driving_started_at);
+
+        return [
+            'name' => $user->name,
+            'phone' => $user->phone,
+            'email' => $user->email,
+            'languages' => $languages,
+            'languageText' => $languages === [] ? '-' : implode(', ', $languages),
+            'drivingStartedAt' => $drivingStartedAt,
+            'experience' => $this->calculateExperienceFromStartDate($drivingStartedAt) ?? '-',
+            'driverLicense' => $user->driver_license ?: '-',
+            'tourGuideLicense' => $user->tour_guide_license ?: '-',
+            'generatedAt' => now()->format('d M Y H:i'),
+        ];
+    }
+
+    private function driverProfileFilename(User $user): string
+    {
+        $name = Str::slug($user->name ?: 'driver');
+
+        return 'driver-profile-' . ($name ?: $user->id) . '.pdf';
     }
 
     private function calculateExperienceFromStartDate(?string $startDate): ?string
@@ -769,6 +893,28 @@ class UserController extends Controller
             ->filter(fn (string $item): bool => $item !== '')
             ->values()
             ->all();
+    }
+
+    /**
+     * @param array<string, mixed> $validated
+     */
+    private function validateBlacklistFields(array $validated, ?string $role): void
+    {
+        if (($validated['status'] ?? null) !== 'Blacklisted') {
+            return;
+        }
+
+        if ($role !== 'Driver') {
+            throw ValidationException::withMessages([
+                'status' => ['Only driver users can be blacklisted.'],
+            ]);
+        }
+
+        if (trim((string) ($validated['blacklist_reason'] ?? '')) === '') {
+            throw ValidationException::withMessages([
+                'blacklist_reason' => ['A blacklist reason is required for blacklisted drivers.'],
+            ]);
+        }
     }
 
     /**

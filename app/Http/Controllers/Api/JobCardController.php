@@ -168,7 +168,7 @@ class JobCardController extends Controller
     {
         $this->authorize('view', $jobCard);
 
-        $jobCard->load(['lead', 'vehicle']);
+        $jobCard->load(['lead', 'vehicle', 'leaseContract', 'leaseAllocation.vehicle', 'leaseAllocation.driver', 'leaseAllocation.leaseContract']);
 
         $company = [
             'name' => Setting::get('company_name', config('app.name')),
@@ -179,16 +179,6 @@ class JobCardController extends Controller
         ];
 
         $transformedJobCard = $this->transform($jobCard);
-
-        $transformedJobCard['groupName'] = null;
-        if ($jobCard->lead_id) {
-            $latestQuotation = \App\Models\Quotation::query()
-                ->where('lead_id', $jobCard->lead_id)
-                ->latest('quote_date')
-                ->latest('id')
-                ->first();
-            $transformedJobCard['groupName'] = $latestQuotation?->group_name;
-        }
 
         if ($this->isSafariType($jobCard->type) && $jobCard->lead_id) {
             $allocations = SafariAllocation::query()
@@ -512,6 +502,7 @@ class JobCardController extends Controller
         return [
             'id' => $jobCard->id,
             'jobCardNo' => $jobCard->job_card_no,
+            'groupName' => $this->resolveGroupName($jobCard),
             'leadId' => $jobCard->lead_id,
             'vehicleId' => $jobCard->vehicle_id,
             'leaseContractId' => $jobCard->lease_contract_id,
@@ -563,6 +554,7 @@ class JobCardController extends Controller
             'leaseAllocation' => $jobCard->leaseAllocation ? [
                 'id' => $jobCard->leaseAllocation->id,
                 'leaseContractId' => $jobCard->leaseAllocation->lease_contract_id,
+                'groupName' => $jobCard->leaseAllocation->group_name,
                 'vehicleId' => $jobCard->leaseAllocation->vehicle_id,
                 'startDate' => optional($jobCard->leaseAllocation->start_date)->toDateString(),
                 'endDate' => optional($jobCard->leaseAllocation->end_date)->toDateString(),
@@ -580,6 +572,7 @@ class JobCardController extends Controller
                 'contract' => $jobCard->leaseAllocation->leaseContract ? [
                     'id' => $jobCard->leaseAllocation->leaseContract->id,
                     'clientName' => $jobCard->leaseAllocation->leaseContract->client_name,
+                    'groupName' => $jobCard->leaseAllocation->leaseContract->group_name,
                     'leaseType' => $jobCard->leaseAllocation->leaseContract->lease_type,
                 ] : null,
             ] : null,
@@ -593,6 +586,39 @@ class JobCardController extends Controller
             'createdAt' => $jobCard->created_at?->toISOString(),
             'updatedAt' => $jobCard->updated_at?->toISOString(),
         ];
+    }
+
+    private function resolveGroupName(JobCard $jobCard): ?string
+    {
+        if ($this->isLeaseType($jobCard->type)) {
+            $leaseGroupName = $jobCard->leaseAllocation?->group_name
+                ?? $jobCard->leaseAllocation?->leaseContract?->group_name
+                ?? $jobCard->leaseContract?->group_name;
+
+            return $leaseGroupName !== null && trim((string) $leaseGroupName) !== ''
+                ? (string) $leaseGroupName
+                : null;
+        }
+
+        $leadGroupName = $jobCard->lead?->group_name;
+        if ($leadGroupName !== null && trim((string) $leadGroupName) !== '') {
+            return (string) $leadGroupName;
+        }
+
+        if ($jobCard->lead_id) {
+            $latestQuotation = \App\Models\Quotation::query()
+                ->where('lead_id', $jobCard->lead_id)
+                ->latest('quote_date')
+                ->latest('id')
+                ->first();
+
+            $quotationGroupName = $latestQuotation?->group_name;
+            if ($quotationGroupName !== null && trim((string) $quotationGroupName) !== '') {
+                return (string) $quotationGroupName;
+            }
+        }
+
+        return null;
     }
 
     /**
