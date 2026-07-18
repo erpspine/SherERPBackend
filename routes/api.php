@@ -26,6 +26,7 @@ use App\Http\Controllers\Api\ChecklistController;
 use App\Http\Controllers\Api\ChecklistItemController;
 use App\Http\Controllers\Api\DestinationDistanceController;
 use App\Http\Controllers\Api\InspectionController;
+use App\Http\Controllers\Api\IncidentReportController;
 use App\Http\Controllers\Api\FuelRequisitionController;
 use App\Http\Controllers\Api\OdometerLogController;
 use Illuminate\Support\Facades\Route;
@@ -41,6 +42,8 @@ Route::middleware('auth:sanctum')->group(function (): void {
 
     Route::get('/users', [UserController::class, 'index'])->middleware('permission:users.view');
     Route::get('/users/{user}', [UserController::class, 'show'])->middleware('permission:users.view');
+    Route::get('/users/{user}/driver-profile/pdf', [UserController::class, 'driverProfilePdf'])->middleware('permission:users.view');
+    Route::post('/users/{user}/driver-profile/email', [UserController::class, 'emailDriverProfile'])->middleware('permission:users.view');
     Route::post('/users', [UserController::class, 'store'])->middleware('permission:users.create');
     Route::put('/users/{user}', [UserController::class, 'update'])->middleware('permission:users.update');
     Route::post('/users/{user}/reset-password', [UserController::class, 'adminResetPassword'])->middleware('permission:users.update');
@@ -74,6 +77,13 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('/inspections', [InspectionController::class, 'store']);
     Route::put('/inspections/{inspection}', [InspectionController::class, 'update']);
     Route::delete('/inspections/{inspection}', [InspectionController::class, 'destroy']);
+
+    Route::get('/incident-reports', [IncidentReportController::class, 'index'])->middleware('permission:vehicles.view');
+    Route::get('/incident-reports/{incidentReport}', [IncidentReportController::class, 'show'])->middleware('permission:vehicles.view');
+    Route::post('/incident-reports', [IncidentReportController::class, 'store'])->middleware('permission:vehicles.update');
+    Route::post('/incident-reports/{incidentReport}', [IncidentReportController::class, 'update'])->middleware('permission:vehicles.update');
+    Route::put('/incident-reports/{incidentReport}', [IncidentReportController::class, 'update'])->middleware('permission:vehicles.update');
+    Route::delete('/incident-reports/{incidentReport}', [IncidentReportController::class, 'destroy'])->middleware('permission:vehicles.delete');
 
     Route::get('/fuel-requisitions', [FuelRequisitionController::class, 'index'])->middleware('permission:fuel-requisitions.view');
     Route::get('/fuel-requisitions/{fuelRequisition}', [FuelRequisitionController::class, 'show'])->middleware('permission:fuel-requisitions.view');
@@ -214,6 +224,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
 
     // Lease Allocations (per-trip allocations within a lease contract)
     Route::get('/lease-allocations', [LeaseAllocationController::class, 'index'])->middleware('permission:vehicles.view');
+    Route::get('/lease-allocations/export/excel', [LeaseAllocationController::class, 'exportExcel'])->middleware('permission:vehicles.view');
     Route::get('/lease-allocations/{leaseAllocation}', [LeaseAllocationController::class, 'show'])->middleware('permission:vehicles.view');
     Route::post('/lease-allocations', [LeaseAllocationController::class, 'store'])->middleware('permission:vehicles.create');
     Route::put('/lease-allocations/{leaseAllocation}', [LeaseAllocationController::class, 'update'])->middleware('permission:vehicles.update');

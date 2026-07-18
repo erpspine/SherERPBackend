@@ -9,6 +9,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class LeaseAllocationController extends Controller
 {
@@ -16,18 +17,84 @@ class LeaseAllocationController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $query = LeaseAllocation::query()
-            ->with(['leaseContract', 'vehicle', 'driver:id,name,email']);
-
-        if ($request->filled('leaseContractId')) {
-            $query->where('lease_contract_id', (int) $request->input('leaseContractId'));
-        }
-
-        $allocations = $query->orderByDesc('id')->get();
+        $allocations = $this->filteredQuery($request)
+            ->orderByDesc('id')
+            ->get();
 
         return response()->json([
             'message' => 'Lease allocations fetched successfully.',
             'allocations' => $allocations->map(fn(LeaseAllocation $a): array => $this->transform($a))->values(),
+        ]);
+    }
+
+    public function exportExcel(Request $request): StreamedResponse
+    {
+        $rows = $this->filteredQuery($request)
+            ->orderByDesc('id')
+            ->get()
+            ->map(fn(LeaseAllocation $allocation): array => $this->transform($allocation))
+            ->values();
+
+        $filename = 'lease-allocations-report.csv';
+
+        return response()->streamDownload(function () use ($rows): void {
+            $output = fopen('php://output', 'w');
+            if ($output === false) {
+                return;
+            }
+
+            // UTF-8 BOM for better Excel compatibility.
+            fwrite($output, "\xEF\xBB\xBF");
+
+            fputcsv($output, [
+                'Client',
+                'Lease Type',
+                'Group Name',
+                'Vehicle No',
+                'Plate No',
+                'Driver',
+                'Start Date',
+                'End Date',
+                'Status',
+                'Itinerary',
+                'Fuel Notes',
+                'Notes',
+            ]);
+
+            foreach ($rows as $row) {
+                $itineraryItems = collect($row['itineraryItems'] ?? [])
+                    ->map(function ($item): string {
+                        if (! is_array($item)) {
+                            return '';
+                        }
+
+                        $date = trim((string) ($item['date'] ?? ''));
+                        $details = trim((string) ($item['details'] ?? ''));
+
+                        return trim(($date !== '' ? ($date . ': ') : '') . $details);
+                    })
+                    ->filter(fn(string $line): bool => $line !== '')
+                    ->implode(' | ');
+
+                fputcsv($output, [
+                    (string) ($row['contract']['clientName'] ?? '-'),
+                    (string) ($row['contract']['leaseType'] ?? '-'),
+                    (string) ($row['groupName'] ?? ''),
+                    (string) ($row['vehicle']['vehicleNo'] ?? '-'),
+                    (string) ($row['vehicle']['plateNo'] ?? '-'),
+                    (string) ($row['driver']['name'] ?? ''),
+                    (string) ($row['startDate'] ?? ''),
+                    (string) ($row['endDate'] ?? ''),
+                    (string) ($row['status'] ?? ''),
+                    (string) ($row['itinerary'] ?? ($itineraryItems !== '' ? $itineraryItems : '')),
+                    (string) ($row['fuelNotes'] ?? ''),
+                    (string) ($row['notes'] ?? ''),
+                ]);
+            }
+
+            fclose($output);
+        }, $filename, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
         ]);
     }
 
@@ -108,7 +175,7 @@ class LeaseAllocationController extends Controller
             'leaseContractId' => ['required', 'integer', 'exists:lease_contracts,id'],
             'groupName' => ['nullable', 'string', 'max:150'],
             'vehicleId' => ['required', 'integer', 'exists:vehicles,id'],
-            'driverId' => ['nullable', 'integer', 'exists:users,id'],
+            'driverId' => ['nullable', 'integer', Rule::exists('users', 'id')->where(fn ($query) => $query->where('status', 'Active'))],
             'startDate' => ['required', 'date_format:Y-m-d'],
             'endDate' => ['required', 'date_format:Y-m-d', 'after_or_equal:startDate'],
             'itinerary' => ['nullable', 'string', 'max:5000'],
@@ -151,6 +218,61 @@ class LeaseAllocationController extends Controller
         }
 
         return $validated;
+    }
+
+    private function filteredQuery(Request $request)
+    {
+        $query = LeaseAllocation::query()
+            ->with(['leaseContract', 'vehicle', 'driver:id,name,email']);
+
+        if ($request->filled('leaseContractId')) {
+            $query->where('lease_contract_id', (int) $request->input('leaseContractId'));
+        }
+
+        if ($request->filled('vehicleId')) {
+            $query->where('vehicle_id', (int) $request->input('vehicleId'));
+        }
+
+        $status = trim((string) $request->input('status', ''));
+        if ($status !== '' && in_array($status, self::STATUSES, true)) {
+            $query->where('status', $status);
+        }
+
+        $dateFrom = trim((string) $request->input('dateFrom', ''));
+        if ($dateFrom !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateFrom)) {
+            $query->whereDate('end_date', '>=', $dateFrom);
+        }
+
+        $dateTo = trim((string) $request->input('dateTo', ''));
+        if ($dateTo !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateTo)) {
+            $query->whereDate('start_date', '<=', $dateTo);
+        }
+
+        $search = trim((string) $request->input('search', ''));
+        if ($search !== '') {
+            $query->where(function ($q) use ($search): void {
+                $q->where('group_name', 'like', '%' . $search . '%')
+                    ->orWhere('itinerary', 'like', '%' . $search . '%')
+                    ->orWhere('notes', 'like', '%' . $search . '%')
+                    ->orWhereHas('leaseContract', function ($contractQuery) use ($search): void {
+                        $contractQuery
+                            ->where('client_name', 'like', '%' . $search . '%')
+                            ->orWhere('lease_type', 'like', '%' . $search . '%');
+                    })
+                    ->orWhereHas('vehicle', function ($vehicleQuery) use ($search): void {
+                        $vehicleQuery
+                            ->where('vehicle_no', 'like', '%' . $search . '%')
+                            ->orWhere('plate_no', 'like', '%' . $search . '%')
+                            ->orWhere('make', 'like', '%' . $search . '%')
+                            ->orWhere('model', 'like', '%' . $search . '%');
+                    })
+                    ->orWhereHas('driver', function ($driverQuery) use ($search): void {
+                        $driverQuery->where('name', 'like', '%' . $search . '%');
+                    });
+            });
+        }
+
+        return $query;
     }
 
     private function transform(LeaseAllocation $allocation): array

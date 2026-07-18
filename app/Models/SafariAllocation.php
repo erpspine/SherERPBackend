@@ -16,6 +16,7 @@ class SafariAllocation extends Model
         'proforma_invoice_id',
         'vehicle_id',
         'driver_id',
+        'vehicle_lease_type',
         'start_date',
         'end_date',
         'status',

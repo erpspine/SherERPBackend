@@ -241,7 +241,7 @@ class LeaseContractController extends Controller
 
     private function calcDays(string $start, string $end): int
     {
-        return max(0, Carbon::parse($end)->diffInDays(Carbon::parse($start)));
+        return max(0, (int) Carbon::parse($start)->diffInDays(Carbon::parse($end), true));
     }
 
     private function resolveLeaseType(int $days): string

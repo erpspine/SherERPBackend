@@ -274,184 +274,204 @@
         $allocatedVehicles = is_array($jobCard['allocatedVehicles'] ?? null) ? $jobCard['allocatedVehicles'] : [];
     @endphp
 
-    <div class="sheet">
-        <div class="top-band"></div>
-        <div class="watermark"></div>
+    @php
+        // If there are multiple allocated vehicles, render one page per vehicle.
+        // Otherwise render a single page (pass [null] to indicate "show all vehicles as-is").
+        $perCarLoop = count($allocatedVehicles) > 1 ? $allocatedVehicles : [null];
+    @endphp
+    @foreach ($perCarLoop as $perCarIdx => $currentCar)
+        @php $isLastPage = ($perCarIdx === count($perCarLoop) - 1); @endphp
+        <div class="sheet" @if (!$isLastPage) style="page-break-after:always;margin-bottom:20px;" @endif>
+            <div class="top-band"></div>
+            <div class="watermark"></div>
 
-        <div class="content">
-            <table class="header">
-                <tr>
-                    <td style="width:70%;">
-                        <div class="brand-title">{{ strtoupper($company['name'] ?? config('app.name')) }}</div>
-                        <div class="brand-tagline">Conquer the wild</div>
-                        <div class="job-heading">JOB CARD</div>
-                        <div class="contact-line">
-                            523 Engutoto, Dharam Singh Road, Njiro Industrial Area, P.O Box 613, Arusha, Tanzania | +255
-                            683 555 666 | info@sher.co.tz
-                        </div>
-                    </td>
-                    <td style="width:30%;text-align:right;">
-                        @if (!empty($logoDataUri))
-                            <img src="{{ $logoDataUri }}" class="logo" alt="Logo">
-                        @endif
-                    </td>
-                </tr>
-            </table>
+            <div class="content">
+                <table class="header">
+                    <tr>
+                        <td style="width:70%;">
+                            <div class="brand-title">{{ strtoupper($company['name'] ?? config('app.name')) }}</div>
+                            <div class="brand-tagline">Conquer the wild</div>
+                            <div class="job-heading">JOB CARD</div>
+                            <div class="contact-line">
+                                523 Engutoto, Dharam Singh Road, Njiro Industrial Area, P.O Box 613, Arusha,
+                                Tanzania | +255
+                                683 555 666 | info@sher.co.tz
+                            </div>
+                        </td>
+                        <td style="width:30%;text-align:right;">
+                            @if (!empty($logoDataUri))
+                                <img src="{{ $logoDataUri }}" class="logo" alt="Logo">
+                            @endif
+                        </td>
+                    </tr>
+                </table>
 
-            <div class="section-title">1. Booking / Job Information</div>
-            <table class="grid">
-                <tr>
-                    <td><span class="label">Job Card No:</span> {{ $jobCard['jobCardNo'] }}</td>
-                    <td><span class="label">Client Details:</span> {{ $clientDetails }}</td>
-                </tr>
-                <tr>
-                    <td><span class="label">Status:</span> {{ $jobCard['status'] ?? 'Open' }}</td>
-                    <td><span class="label">Booking Number:</span> {{ $jobCard['bookingReferenceNo'] ?? '-' }}</td>
-                </tr>
-                <tr>
-                    <td><span class="label">Group Name:</span> {{ $jobCard['groupName'] ?? '-' }}</td>
-                    <td></td>
-                </tr>
-                <tr>
-                    <td><span class="label">Start Date:</span>
-                        {{ $formatDisplayDate($jobCard['safariStartDate'] ?? null) }}</td>
-                    <td><span class="label">End Date:</span>
-                        {{ $formatDisplayDate($jobCard['safariEndDate'] ?? null) }}</td>
-                </tr>
-                <tr>
-                    <td><span class="label">Pax Adults:</span> {{ $jobCard['adults'] ?? '-' }}</td>
-                    <td><span class="label">Pax Children:</span> {{ $jobCard['children'] ?? '-' }}</td>
-                </tr>
-                <tr>
-                    <td colspan="2">
-                        <span class="label">Vehicle(s):</span>
-                        @if (!empty($allocatedVehicles))
-                            @foreach ($allocatedVehicles as $allocationVehicle)
+                <div class="section-title">1. Booking / Job Information</div>
+                <table class="grid">
+                    <tr>
+                        <td><span class="label">Job Card No:</span> {{ $jobCard['jobCardNo'] }}</td>
+                        <td><span class="label">Client Details:</span> {{ $clientDetails }}</td>
+                    </tr>
+                    <tr>
+                        <td><span class="label">Status:</span> {{ $jobCard['status'] ?? 'Open' }}</td>
+                        <td><span class="label">Booking Number:</span> {{ $jobCard['bookingReferenceNo'] ?? '-' }}
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><span class="label">Group Name:</span> {{ $jobCard['groupName'] ?? '-' }}</td>
+                        <td></td>
+                    </tr>
+                    <tr>
+                        <td><span class="label">Start Date:</span>
+                            {{ $formatDisplayDate($jobCard['safariStartDate'] ?? null) }}</td>
+                        <td><span class="label">End Date:</span>
+                            {{ $formatDisplayDate($jobCard['safariEndDate'] ?? null) }}</td>
+                    </tr>
+                    <tr>
+                        <td><span class="label">Pax Adults:</span> {{ $jobCard['adults'] ?? '-' }}</td>
+                        <td><span class="label">Pax Children:</span> {{ $jobCard['children'] ?? '-' }}</td>
+                    </tr>
+                    <tr>
+                        <td colspan="2">
+                            <span class="label">Vehicle(s):</span>
+                            @if ($currentCar !== null)
+                                {{-- Per-car page: show only this vehicle --}}
                                 <div>
-                                    {{ $formatVehicleLabel($allocationVehicle['vehicleNo'] ?? '', $allocationVehicle['plateNo'] ?? '') }}
-                                    @if (!empty($allocationVehicle['driverName']))
-                                        - Driver: {{ $allocationVehicle['driverName'] }}
+                                    {{ $formatVehicleLabel($currentCar['vehicleNo'] ?? '', $currentCar['plateNo'] ?? '') }}
+                                    @if (!empty($currentCar['driverName']))
+                                        - Driver: {{ $currentCar['driverName'] }}
                                     @endif
                                 </div>
-                            @endforeach
-                        @elseif (!empty($jobCard['vehicle']))
-                            {{ $formatVehicleLabel($jobCard['vehicle']['vehicle_no'] ?? '', $jobCard['vehicle']['plate_no'] ?? '') }}
-                        @else
-                            -
-                        @endif
-                    </td>
-                </tr>
-                @if ($driverDetails !== '')
-                    <tr>
-                        <td colspan="2"><span class="label">Driver Details:</span> {{ $driverDetails }}</td>
+                            @elseif (!empty($allocatedVehicles))
+                                @foreach ($allocatedVehicles as $allocationVehicle)
+                                    <div>
+                                        {{ $formatVehicleLabel($allocationVehicle['vehicleNo'] ?? '', $allocationVehicle['plateNo'] ?? '') }}
+                                        @if (!empty($allocationVehicle['driverName']))
+                                            - Driver: {{ $allocationVehicle['driverName'] }}
+                                        @endif
+                                    </div>
+                                @endforeach
+                            @elseif (!empty($jobCard['vehicle']))
+                                {{ $formatVehicleLabel($jobCard['vehicle']['vehicle_no'] ?? '', $jobCard['vehicle']['plate_no'] ?? '') }}
+                            @else
+                                -
+                            @endif
+                        </td>
                     </tr>
-                @endif
-                <tr>
-                    <td colspan="2"><span class="label">Route / Summary:</span>
-                        {{ $jobCard['routeSummary'] ?? '-' }}</td>
-                </tr>
-            </table>
-
-            @if ($isSafari || $isLease)
-                @php
-                    $itineraryDays = $jobCard['routeItinerary'] ?? [];
-                    $driverAllowanceValue = $jobCard['driverAllowance'] ?? null;
-                @endphp
-                <div class="section-title">2. Itinerary</div>
-                <table class="itinerary">
-                    <thead>
+                    @if ($driverDetails !== '')
                         <tr>
-                            <th style="width:25%;">Date</th>
-                            <th>Date Description</th>
-                            <th style="width:20%;">Allowance/Day</th>
+                            <td colspan="2"><span class="label">Driver Details:</span> {{ $driverDetails }}
+                            </td>
                         </tr>
-                    </thead>
-                    <tbody>
-                        @forelse($itineraryDays as $day)
+                    @endif
+                    <tr>
+                        <td colspan="2"><span class="label">Route / Summary:</span>
+                            {{ $jobCard['routeSummary'] ?? '-' }}</td>
+                    </tr>
+                </table>
+
+                @if ($isSafari || $isLease)
+                    @php
+                        $itineraryDays = $jobCard['routeItinerary'] ?? [];
+                        $driverAllowanceValue = $jobCard['driverAllowance'] ?? null;
+                    @endphp
+                    <div class="section-title">2. Itinerary{{ $currentCar !== null ? ' (Per Car)' : '' }}</div>
+                    <table class="itinerary">
+                        <thead>
                             <tr>
+                                <th style="width:25%;">Date</th>
+                                <th>Date Description</th>
+                                <th style="width:20%;">Allowance/Day</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @forelse($itineraryDays as $day)
+                                <tr>
+                                    <td>
+                                        {{ $formatDisplayDate($day['date'] ?? ($day['dayDate'] ?? ($day['dayTitle'] ?? null))) }}
+                                    </td>
+                                    <td>{{ $day['dayDescription'] ?? ($day['dateDescription'] ?? ($day['description'] ?? '-')) }}
+                                    </td>
+                                    <td>
+                                        @if (isset($day['allowancePerDay']) && $day['allowancePerDay'] !== null && $day['allowancePerDay'] !== '')
+                                            {{ number_format((float) $day['allowancePerDay'], 2) }}
+                                        @else
+                                            -
+                                        @endif
+                                    </td>
+                                </tr>
+                            @empty
+                                <tr>
+                                    <td colspan="3">No itinerary details provided.</td>
+                                </tr>
+                            @endforelse
+                            <tr>
+                                <td colspan="2" style="text-align:right;"><span class="label">Driver Allowance
+                                        (Per Car):</span></td>
                                 <td>
-                                    {{ $formatDisplayDate($day['date'] ?? ($day['dayDate'] ?? ($day['dayTitle'] ?? null))) }}
-                                </td>
-                                <td>{{ $day['dayDescription'] ?? ($day['dateDescription'] ?? ($day['description'] ?? '-')) }}
-                                </td>
-                                <td>
-                                    @if (isset($day['allowancePerDay']) && $day['allowancePerDay'] !== null && $day['allowancePerDay'] !== '')
-                                        {{ number_format((float) $day['allowancePerDay'], 2) }}
+                                    @if ($driverAllowanceValue !== null && $driverAllowanceValue !== '')
+                                        {{ number_format((float) $driverAllowanceValue, 2) }}
                                     @else
                                         -
                                     @endif
                                 </td>
                             </tr>
-                        @empty
-                            <tr>
-                                <td colspan="3">No itinerary details provided.</td>
-                            </tr>
-                        @endforelse
+                        </tbody>
+                    </table>
+                @else
+                    <div class="section-title">2. Job Type Details</div>
+                    <table class="grid">
                         <tr>
-                            <td colspan="2" style="text-align:right;"><span class="label">Driver Allowance
-                                    Total:</span></td>
-                            <td>
-                                @if ($driverAllowanceValue !== null && $driverAllowanceValue !== '')
-                                    {{ number_format((float) $driverAllowanceValue, 2) }}
-                                @else
-                                    -
-                                @endif
+                            <td><span class="label">Reason:</span> {{ $jobCard['reason'] ?? '-' }}</td>
+                            <td><span class="label">Client Details:</span> {{ $jobCard['clientDetails'] ?? '-' }}
                             </td>
                         </tr>
-                    </tbody>
-                </table>
-            @else
-                <div class="section-title">2. Job Type Details</div>
-                <table class="grid">
-                    <tr>
-                        <td><span class="label">Reason:</span> {{ $jobCard['reason'] ?? '-' }}</td>
-                        <td><span class="label">Client Details:</span> {{ $jobCard['clientDetails'] ?? '-' }}</td>
-                    </tr>
-                    <tr>
-                        <td><span class="label">Location:</span> {{ $jobCard['location'] ?? '-' }}</td>
-                        <td><span class="label">KMS:</span> {{ $jobCard['kms'] ?? '-' }}</td>
-                    </tr>
-                </table>
-
-                <div class="section-title">3. Vehicle Run Details</div>
-                <table class="grid">
-                    <tr>
-                        <td><span class="label">Odometer Out:</span> {{ $jobCard['odometerOut'] ?? '-' }}</td>
-                        <td><span class="label">Odometer In:</span> {{ $jobCard['odometerIn'] ?? '-' }}</td>
-                        <td><span class="label">Mileage:</span> {{ $jobCard['mileage'] ?? '-' }}</td>
-                    </tr>
-                    @if ($driverDetails !== '')
                         <tr>
-                            <td colspan="3"><span class="label">Driver Details:</span>
-                                {{ $driverDetails }}</td>
+                            <td><span class="label">Location:</span> {{ $jobCard['location'] ?? '-' }}</td>
+                            <td><span class="label">KMS:</span> {{ $jobCard['kms'] ?? '-' }}</td>
                         </tr>
-                    @endif
+                    </table>
+
+                    <div class="section-title">3. Vehicle Run Details</div>
+                    <table class="grid">
+                        <tr>
+                            <td><span class="label">Odometer Out:</span> {{ $jobCard['odometerOut'] ?? '-' }}</td>
+                            <td><span class="label">Odometer In:</span> {{ $jobCard['odometerIn'] ?? '-' }}</td>
+                            <td><span class="label">Mileage:</span> {{ $jobCard['mileage'] ?? '-' }}</td>
+                        </tr>
+                        @if ($driverDetails !== '')
+                            <tr>
+                                <td colspan="3"><span class="label">Driver Details:</span>
+                                    {{ $driverDetails }}</td>
+                            </tr>
+                        @endif
+                    </table>
+                @endif
+
+                <div class="section-title">Additional Details</div>
+                <div class="notes">{{ $jobCard['additionalDetails'] ?? '-' }}</div>
+
+                <table class="signatures">
+                    <tr>
+                        <td>
+                            <div class="sign-label">Prepared By</div>
+                            <div class="sign-line">Name & Signature</div>
+                            <div style="margin-top: 10px;">Date: ____________________</div>
+                        </td>
+                        <td>
+                            <div class="sign-label">Fleet Manager</div>
+                            <div class="sign-line">Fleet Manager Signature</div>
+                            <div style="margin-top: 10px;">Date: ____________________</div>
+                        </td>
+                    </tr>
                 </table>
-            @endif
 
-            <div class="section-title">Additional Details</div>
-            <div class="notes">{{ $jobCard['additionalDetails'] ?? '-' }}</div>
-
-            <table class="signatures">
-                <tr>
-                    <td>
-                        <div class="sign-label">Prepared By</div>
-                        <div class="sign-line">Name & Signature</div>
-                        <div style="margin-top: 10px;">Date: ____________________</div>
-                    </td>
-                    <td>
-                        <div class="sign-label">Fleet Manager</div>
-                        <div class="sign-line">Fleet Manager Signature</div>
-                        <div style="margin-top: 10px;">Date: ____________________</div>
-                    </td>
-                </tr>
-            </table>
-
-            <div class="footer">
-                Generated on {{ now()->format('Y-m-d H:i') }}
+                <div class="footer">
+                    Generated on {{ now()->format('Y-m-d H:i') }}
+                </div>
             </div>
         </div>
-    </div>
+    @endforeach
 </body>
 
 </html>

@@ -546,7 +546,7 @@ class ProformaInvoiceController extends Controller
                 }
 
                 $allocation->fill([
-                    'driver_id' => $vehicle->assigned_driver_id,
+                    'driver_id' => $vehicle->assignedDriver?->status === 'Active' ? $vehicle->assigned_driver_id : null,
                     'status' => 'Assigned',
                     'notes' => $allocation->notes ?: 'Auto-created from quotation to PI conversion.',
                 ]);
