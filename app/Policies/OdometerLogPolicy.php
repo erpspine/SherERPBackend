@@ -30,7 +30,10 @@ class OdometerLogPolicy
         }
 
         // Drivers can only see logs that belong to a trip they own.
-        return (int) $odometerLog->safariAllocation?->driver_id === (int) $user->id;
+        $driverId = $odometerLog->safariAllocation?->driver_id
+            ?? $odometerLog->leaseAllocation?->driver_id;
+
+        return (int) $driverId === (int) $user->id;
     }
 
     public function create(User $user): bool
@@ -57,7 +60,10 @@ class OdometerLogPolicy
         }
 
         // Drivers can only edit their own readings for their own trips.
-        return (int) $odometerLog->safariAllocation?->driver_id === (int) $user->id
+        $driverId = $odometerLog->safariAllocation?->driver_id
+            ?? $odometerLog->leaseAllocation?->driver_id;
+
+        return (int) $driverId === (int) $user->id
             && (int) $odometerLog->user_id === (int) $user->id;
     }
 

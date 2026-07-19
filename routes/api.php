@@ -18,6 +18,7 @@ use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\JobCardController;
 use App\Http\Controllers\Api\LeaseContractController;
 use App\Http\Controllers\Api\LeaseAllocationController;
+use App\Http\Controllers\Api\LeaseOdometerLogController;
 use App\Http\Controllers\Api\LeaseProformaInvoiceController;
 use App\Http\Controllers\Api\SafariAllocationController;
 use App\Http\Controllers\Api\UserController;
@@ -226,6 +227,9 @@ Route::middleware('auth:sanctum')->group(function (): void {
     // Driver-safe feed: the controller always scopes this route to the
     // authenticated user, so drivers never receive another driver's leases.
     Route::get('/my-lease-allocations', [LeaseAllocationController::class, 'mine']);
+    Route::get('/lease-trips/{leaseAllocation}/odometer-logs', [LeaseOdometerLogController::class, 'index']);
+    Route::post('/lease-trips/{leaseAllocation}/odometer-logs', [LeaseOdometerLogController::class, 'store'])
+        ->middleware('permission:odometer-logs.create');
     Route::get('/lease-allocations', [LeaseAllocationController::class, 'index'])->middleware('permission:vehicles.view');
     Route::get('/lease-allocations/export/excel', [LeaseAllocationController::class, 'exportExcel'])->middleware('permission:vehicles.view');
     Route::get('/lease-allocations/{leaseAllocation}', [LeaseAllocationController::class, 'show'])->middleware('permission:vehicles.view');

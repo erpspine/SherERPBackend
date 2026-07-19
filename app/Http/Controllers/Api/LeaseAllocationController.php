@@ -31,6 +31,7 @@ class LeaseAllocationController extends Controller
     {
         $allocations = LeaseAllocation::query()
             ->with(['leaseContract', 'vehicle', 'driver:id,name,email'])
+            ->withCount('odometerLogs')
             ->where('driver_id', $request->user()->id)
             ->orderByDesc('id')
             ->get();
@@ -296,6 +297,8 @@ class LeaseAllocationController extends Controller
         return [
             'id' => $allocation->id,
             'assignmentType' => 'long_term_lease',
+            'odometer_log_count' => (int) ($allocation->odometer_logs_count ?? 0),
+            'odometerLogCount' => (int) ($allocation->odometer_logs_count ?? 0),
             'leaseContractId' => $allocation->lease_contract_id,
             'groupName' => $allocation->group_name,
             'contract' => $allocation->leaseContract ? [

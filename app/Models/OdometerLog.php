@@ -12,10 +12,12 @@ class OdometerLog extends Model
      */
     protected $fillable = [
         'safari_allocation_id',
+        'lease_allocation_id',
         'user_id',
         'fuel_log_id',
         'client_id',
         'entry_type',
+        'fuel_fill_type',
         'location',
         'odometer_reading',
         'liters',
@@ -43,6 +45,11 @@ class OdometerLog extends Model
     public function safariAllocation(): BelongsTo
     {
         return $this->belongsTo(SafariAllocation::class);
+    }
+
+    public function leaseAllocation(): BelongsTo
+    {
+        return $this->belongsTo(LeaseAllocation::class);
     }
 
     public function user(): BelongsTo

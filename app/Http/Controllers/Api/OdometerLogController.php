@@ -75,6 +75,7 @@ class OdometerLogController extends Controller
         $validated = $request->validate([
             'client_id' => ['nullable', 'string', 'max:64'],
             'entry_type' => ['required', Rule::in(self::ENTRY_TYPES)],
+            'fuel_fill_type' => ['nullable', Rule::in(['full_tank', 'extra'])],
             'location' => ['required', 'string', 'max:255'],
             'odometer_reading' => ['required', 'integer', 'min:0'],
             'liters' => ['nullable', 'numeric', 'min:0'],
@@ -115,6 +116,10 @@ class OdometerLogController extends Controller
                 $recordedAt,
             ): OdometerLog {
                 $entryType = $validated['entry_type'];
+                $fuelFillType = $entryType === 'Fuel'
+                    ? ($validated['fuel_fill_type'] ?? 'full_tank')
+                    : null;
+                $isFullTankFuel = $entryType === 'Fuel' && $fuelFillType === 'full_tank';
                 $vehicleId = $safariAllocation->vehicle_id;
 
                 // Decide which Fuel log this reading belongs to:
@@ -122,12 +127,15 @@ class OdometerLogController extends Controller
                 //  - Other rows attach to the latest Fuel log for the same
                 //    vehicle whose recorded_at is <= this reading.
                 $fuelLogId = null;
-                if ($entryType !== 'Fuel') {
+                if (! $isFullTankFuel) {
                     $fuelLogId = OdometerLog::query()
                         ->whereHas('safariAllocation', function ($query) use ($vehicleId): void {
                             $query->where('vehicle_id', $vehicleId);
                         })
                         ->where('entry_type', 'Fuel')
+                        ->where(function ($query): void {
+                            $query->whereNull('fuel_fill_type')->orWhere('fuel_fill_type', 'full_tank');
+                        })
                         ->where('recorded_at', '<=', $recordedAt)
                         ->orderByDesc('recorded_at')
                         ->orderByDesc('id')
@@ -140,6 +148,7 @@ class OdometerLogController extends Controller
                     'fuel_log_id' => $fuelLogId,
                     'client_id' => $clientId,
                     'entry_type' => $entryType,
+                    'fuel_fill_type' => $fuelFillType,
                     'location' => $validated['location'],
                     'odometer_reading' => $validated['odometer_reading'],
                     'liters' => $validated['liters'] ?? null,
@@ -150,7 +159,7 @@ class OdometerLogController extends Controller
                     'recorded_at' => $recordedAt,
                 ]);
 
-                if ($entryType === 'Fuel') {
+                if ($isFullTankFuel) {
                     // Closing the previous open tank cycle for the same
                     // vehicle, even if the fuel-up happened on a different
                     // safari allocation / trip.
@@ -159,6 +168,9 @@ class OdometerLogController extends Controller
                             $query->where('vehicle_id', $vehicleId);
                         })
                         ->where('entry_type', 'Fuel')
+                        ->where(function ($query): void {
+                            $query->whereNull('fuel_fill_type')->orWhere('fuel_fill_type', 'full_tank');
+                        })
                         ->whereNull('closed_at')
                         ->where('id', '!=', $log->id)
                         ->where('recorded_at', '<', $recordedAt)
@@ -224,6 +236,7 @@ class OdometerLogController extends Controller
 
         $validated = $request->validate([
             'entry_type' => ['sometimes', Rule::in(self::ENTRY_TYPES)],
+            'fuel_fill_type' => ['sometimes', 'nullable', Rule::in(['full_tank', 'extra'])],
             'location' => ['sometimes', 'string', 'max:255'],
             'odometer_reading' => ['sometimes', 'integer', 'min:0'],
             'liters' => ['sometimes', 'nullable', 'numeric', 'min:0'],
@@ -349,6 +362,10 @@ class OdometerLogController extends Controller
             ->filter(fn(array $row): bool => ($row['entry_type'] ?? '') === 'Fuel')
             ->values();
 
+        $fullTankRows = $fuelRows
+            ->filter(fn(array $row): bool => ($row['fuel_fill_type'] ?? 'full_tank') === 'full_tank')
+            ->values();
+
         $totalLiters = (float) $fuelRows->sum(fn(array $row): float => (float) ($row['liters'] ?? 0));
         $totalFuelCost = (float) $fuelRows->sum(function (array $row): float {
             $liters = (float) ($row['liters'] ?? 0);
@@ -362,7 +379,7 @@ class OdometerLogController extends Controller
         $totalFuelConsumed = 0.0;
 
         $previousFuel = null;
-        foreach ($fuelRows as $index => $fuelRow) {
+        foreach ($fullTankRows as $index => $fuelRow) {
             $distanceCovered = null;
             if ($previousFuel !== null) {
                 $distanceCovered = max(
@@ -539,6 +556,9 @@ class OdometerLogController extends Controller
             'fuel_log_id' => $log->fuel_log_id,
             'client_id' => $log->client_id,
             'entry_type' => $entryType,
+            'fuel_fill_type' => $entryType === 'Fuel'
+                ? ($log->fuel_fill_type ?: 'full_tank')
+                : null,
             'location' => $log->location,
             'odometer_reading' => (int) $log->odometer_reading,
             'liters' => $log->liters !== null ? (float) $log->liters : null,
