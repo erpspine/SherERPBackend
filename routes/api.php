@@ -227,6 +227,10 @@ Route::middleware('auth:sanctum')->group(function (): void {
     // Driver-safe feed: the controller always scopes this route to the
     // authenticated user, so drivers never receive another driver's leases.
     Route::get('/my-lease-allocations', [LeaseAllocationController::class, 'mine']);
+    Route::get('/lease-trips/{leaseAllocation}/odometer-logs/report', [LeaseOdometerLogController::class, 'report'])
+        ->middleware('permission:odometer-logs.view');
+    Route::get('/lease-trips/{leaseAllocation}/odometer-logs/pdf', [LeaseOdometerLogController::class, 'pdf'])
+        ->middleware('permission:odometer-logs.view');
     Route::get('/lease-trips/{leaseAllocation}/odometer-logs', [LeaseOdometerLogController::class, 'index']);
     Route::post('/lease-trips/{leaseAllocation}/odometer-logs', [LeaseOdometerLogController::class, 'store'])
         ->middleware('permission:odometer-logs.create');

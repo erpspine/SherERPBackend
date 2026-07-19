@@ -21,6 +21,7 @@ class SafariAllocationController extends Controller
         $query = SafariAllocation::query()
             ->with(['lead.quotations', 'proformaInvoice', 'vehicle', 'driver'])
             ->withCount('odometerLogs')
+            ->withMax('odometerLogs', 'recorded_at')
             ->latest('id');
 
         if ($request->user()?->hasRole('Driver')) {
@@ -41,6 +42,7 @@ class SafariAllocationController extends Controller
 
         $safariAllocation->load(['lead.quotations', 'proformaInvoice', 'vehicle', 'driver']);
         $safariAllocation->loadCount('odometerLogs');
+        $safariAllocation->loadMax('odometerLogs', 'recorded_at');
 
         return response()->json([
             'message' => 'Safari allocation fetched successfully.',
@@ -56,7 +58,7 @@ class SafariAllocationController extends Controller
             'leadId' => ['required', 'integer', 'exists:leads,id'],
             'proformaInvoiceId' => ['nullable', 'integer', 'exists:proforma_invoices,id'],
             'vehicleId' => ['required', 'integer', 'exists:vehicles,id'],
-            'driverId' => ['nullable', 'integer', Rule::exists('users', 'id')->where(fn ($query) => $query->where('status', 'Active'))],
+            'driverId' => ['nullable', 'integer', Rule::exists('users', 'id')->where(fn($query) => $query->where('status', 'Active'))],
             'vehicleLeaseType' => ['sometimes', Rule::in(['Short-Term Lease', 'Long-Term Lease'])],
             'startDate' => ['sometimes', 'date_format:Y-m-d'],
             'endDate' => ['sometimes', 'date_format:Y-m-d'],
@@ -109,7 +111,7 @@ class SafariAllocationController extends Controller
             'leadId' => ['sometimes', 'integer', 'exists:leads,id'],
             'proformaInvoiceId' => ['sometimes', 'nullable', 'integer', 'exists:proforma_invoices,id'],
             'vehicleId' => ['sometimes', 'integer', 'exists:vehicles,id'],
-            'driverId' => ['sometimes', 'nullable', 'integer', Rule::exists('users', 'id')->where(fn ($query) => $query->where('status', 'Active'))],
+            'driverId' => ['sometimes', 'nullable', 'integer', Rule::exists('users', 'id')->where(fn($query) => $query->where('status', 'Active'))],
             'vehicleLeaseType' => ['sometimes', Rule::in(['Short-Term Lease', 'Long-Term Lease'])],
             'startDate' => ['sometimes', 'date_format:Y-m-d'],
             'endDate' => ['sometimes', 'date_format:Y-m-d'],
@@ -221,6 +223,8 @@ class SafariAllocationController extends Controller
             // recorded" so drivers can see progress at a glance.
             'odometer_log_count' => (int) ($allocation->odometer_logs_count ?? 0),
             'odometerLogCount' => (int) ($allocation->odometer_logs_count ?? 0),
+            'latestOdometerLogAt' => $allocation->odometer_logs_max_recorded_at,
+            'latest_odometer_log_at' => $allocation->odometer_logs_max_recorded_at,
         ];
     }
 

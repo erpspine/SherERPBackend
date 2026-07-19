@@ -379,9 +379,13 @@ class OdometerLogController extends Controller
         $totalFuelConsumed = 0.0;
 
         $previousFuel = null;
-        foreach ($fullTankRows as $index => $fuelRow) {
+        $refillNo = 0;
+        foreach ($fuelRows as $fuelRow) {
+            $refillNo++;
+            $fillType = $fuelRow['fuel_fill_type'] ?? 'full_tank';
+            $isFullTank = $fillType === 'full_tank';
             $distanceCovered = null;
-            if ($previousFuel !== null) {
+            if ($isFullTank && $previousFuel !== null) {
                 $distanceCovered = max(
                     0,
                     (int) ($fuelRow['odometer_reading'] ?? 0) - (int) ($previousFuel['odometer_reading'] ?? 0)
@@ -389,7 +393,7 @@ class OdometerLogController extends Controller
             }
 
             $fuelAdded = $fuelRow['liters'] !== null ? (float) $fuelRow['liters'] : null;
-            $fuelConsumed = $fuelAdded !== null ? max(0, self::TANK_CAPACITY_LITERS - $fuelAdded) : null;
+            $fuelConsumed = $isFullTank && $fuelAdded !== null ? max(0, self::TANK_CAPACITY_LITERS - $fuelAdded) : null;
 
             $driverAverage = null;
             if ($distanceCovered !== null && $fuelConsumed !== null && $fuelConsumed > 0) {
@@ -399,7 +403,9 @@ class OdometerLogController extends Controller
             }
 
             $fuelRefills[] = [
-                'refillNo' => $index + 1,
+                'refillNo' => $refillNo,
+                'fillType' => $fillType,
+                'fillTypeLabel' => $fillType === 'extra' ? 'Partial Refill' : 'Full Tank',
                 'date' => $fuelRow['recorded_at'] ?? null,
                 'odometer' => $fuelRow['odometer_reading'] ?? null,
                 'fuelAdded' => $fuelAdded,
@@ -410,7 +416,9 @@ class OdometerLogController extends Controller
                 'recordedBy' => $fuelRow['recorded_by'] ?? null,
             ];
 
-            $previousFuel = $fuelRow;
+            if ($isFullTank) {
+                $previousFuel = $fuelRow;
+            }
         }
 
         $overallDriverAverage = $totalFuelConsumed > 0

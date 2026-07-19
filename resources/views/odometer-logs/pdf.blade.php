@@ -172,6 +172,7 @@
             <tr>
                 <th>#</th>
                 <th>Date</th>
+                <th>Fill Type</th>
                 <th class="right">Odometer</th>
                 <th class="right">Fuel Added (L)</th>
                 <th class="right">Fuel Consumed (L)</th>
@@ -192,6 +193,7 @@
                             -
                         @endif
                     </td>
+                    <td>{{ $refill['fillTypeLabel'] ?? '-' }}</td>
                     <td class="right">{{ $refill['odometer'] ?? '-' }}</td>
                     <td class="right">
                         {{ $refill['fuelAdded'] !== null ? number_format((float) $refill['fuelAdded'], 2) : '-' }}</td>
@@ -209,7 +211,7 @@
                 </tr>
             @empty
                 <tr>
-                    <td colspan="9" class="small">No fuel refill records found.</td>
+                    <td colspan="10" class="small">No fuel refill records found.</td>
                 </tr>
             @endforelse
         </tbody>
@@ -243,7 +245,14 @@
                             -
                         @endif
                     </td>
-                    <td>{{ $log['entry_type'] ?? '-' }}</td>
+                    <td>
+                        {{ $log['entry_type'] ?? '-' }}
+                        @if (($log['entry_type'] ?? '') === 'Fuel')
+                            <div class="small">
+                                {{ ($log['fuel_fill_type'] ?? 'full_tank') === 'extra' ? 'Partial Refill' : 'Full Tank' }}
+                            </div>
+                        @endif
+                    </td>
                     <td>{{ $log['location'] ?? '-' }}</td>
                     <td class="right">{{ $log['odometer_reading'] ?? '-' }}</td>
                     <td class="right">{{ $log['liters'] !== null ? number_format((float) $log['liters'], 2) : '-' }}
