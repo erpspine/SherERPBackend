@@ -14,7 +14,7 @@ class IncidentReportController extends Controller
     public function index(): JsonResponse
     {
         $reports = IncidentReport::query()
-            ->with(['vehicle:id,vehicle_no,plate_no,make,model', 'lead:id,booking_ref,client_company,group_name,start_date,end_date'])
+            ->with(['vehicle.assignedDriver:id,name,email', 'lead:id,booking_ref,client_company,group_name,start_date,end_date'])
             ->latest('incident_date')
             ->latest('id')
             ->get();
@@ -27,7 +27,7 @@ class IncidentReportController extends Controller
 
     public function show(IncidentReport $incidentReport): JsonResponse
     {
-        $incidentReport->loadMissing(['vehicle:id,vehicle_no,plate_no,make,model', 'lead:id,booking_ref,client_company,group_name,start_date,end_date']);
+        $incidentReport->loadMissing(['vehicle.assignedDriver:id,name,email', 'lead:id,booking_ref,client_company,group_name,start_date,end_date']);
 
         return response()->json([
             'message' => 'Incident report fetched successfully.',
@@ -41,7 +41,7 @@ class IncidentReportController extends Controller
         $validated['photos'] = $this->storeUploadedPhotos($request);
 
         $report = IncidentReport::create($this->mapRequestToDb($validated));
-        $report->loadMissing(['vehicle:id,vehicle_no,plate_no,make,model', 'lead:id,booking_ref,client_company,group_name,start_date,end_date']);
+        $report->loadMissing(['vehicle.assignedDriver:id,name,email', 'lead:id,booking_ref,client_company,group_name,start_date,end_date']);
 
         return response()->json([
             'message' => 'Incident report created successfully.',
@@ -72,7 +72,7 @@ class IncidentReportController extends Controller
 
         $incidentReport->update($this->mapRequestToDb($validated));
         $incidentReport->refresh();
-        $incidentReport->loadMissing(['vehicle:id,vehicle_no,plate_no,make,model', 'lead:id,booking_ref,client_company,group_name,start_date,end_date']);
+        $incidentReport->loadMissing(['vehicle.assignedDriver:id,name,email', 'lead:id,booking_ref,client_company,group_name,start_date,end_date']);
 
         return response()->json([
             'message' => 'Incident report updated successfully.',
@@ -199,6 +199,12 @@ class IncidentReportController extends Controller
                 'plateNo' => $report->vehicle->plate_no,
                 'make' => $report->vehicle->make,
                 'model' => $report->vehicle->model,
+                'assignedDriverId' => $report->vehicle->assigned_driver_id,
+                'assignedDriver' => $report->vehicle->assignedDriver ? [
+                    'id' => $report->vehicle->assignedDriver->id,
+                    'name' => $report->vehicle->assignedDriver->name,
+                    'email' => $report->vehicle->assignedDriver->email,
+                ] : null,
             ] : null,
             'safari' => $report->lead ? [
                 'id' => $report->lead->id,
