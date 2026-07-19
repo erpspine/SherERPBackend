@@ -10,8 +10,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
     'vehicle_id',
     'service_center',
     'service_type',
+    'service_date',
     'service_date_out',
     'service_date_in',
+    'parts_replaced',
     'odometer_out',
     'odometer_in',
     'fuel_out',
@@ -33,6 +35,7 @@ class VehicleService extends Model
     protected function casts(): array
     {
         return [
+            'service_date' => 'date',
             'service_date_out' => 'date',
             'service_date_in' => 'date',
             'odometer_out' => 'integer',

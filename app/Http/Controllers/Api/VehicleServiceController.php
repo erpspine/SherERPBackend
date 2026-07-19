@@ -39,36 +39,27 @@ class VehicleServiceController extends Controller
             'vehicleId' => ['required', 'integer', 'exists:vehicles,id'],
             'serviceCenter' => ['nullable', 'string', 'max:255'],
             'serviceType' => ['nullable', 'string', 'max:255'],
-            'serviceDateOut' => ['required', 'date'],
+            'serviceDate' => ['required_without:serviceDateOut', 'date'],
+            'serviceDateOut' => ['nullable', 'date'],
             'serviceDateIn' => ['nullable', 'date'],
-            'odometerOut' => ['required', 'integer', 'min:0'],
+            'partsReplaced' => ['nullable', 'string'],
+            'odometerOut' => ['nullable', 'integer', 'min:0'],
             'odometerIn' => ['nullable', 'integer', 'min:0'],
-            'fuelOut' => ['required', 'integer', 'min:0', 'max:100'],
+            'fuelOut' => ['nullable', 'integer', 'min:0', 'max:100'],
             'fuelIn' => ['nullable', 'integer', 'min:0', 'max:100'],
             'cost' => ['nullable', 'numeric', 'min:0'],
             'notes' => ['nullable', 'string'],
-            'status' => ['sometimes', Rule::in(['In Service', 'Returned'])],
+            'status' => ['sometimes', Rule::in(['In Service', 'Returned', 'Cancelled'])],
         ]);
 
         $status = $validated['status'] ?? 'In Service';
 
-        if ($status === 'Returned') {
-            $request->validate([
-                'serviceDateIn' => ['required', 'date', 'after_or_equal:serviceDateOut'],
-                'odometerIn' => ['required', 'integer', 'min:0'],
-                'fuelIn' => ['required', 'integer', 'min:0', 'max:100'],
-            ]);
-        }
-
-        if (isset($validated['serviceDateIn']) && $validated['serviceDateIn'] < $validated['serviceDateOut']) {
-            return response()->json([
-                'message' => 'Validation failed.',
-                'errors' => ['serviceDateIn' => ['The serviceDateIn must be a date after or equal to serviceDateOut.']],
-            ], 422);
-        }
-
         $payload = $this->mapRequestToDb($validated);
+        if (! array_key_exists('service_date', $payload) && array_key_exists('service_date_out', $payload)) {
+            $payload['service_date'] = $payload['service_date_out'];
+        }
         $payload['status'] = $status;
+        $payload['service_date_out'] = $payload['service_date'] ?? $payload['service_date_out'] ?? null;
 
         $service = VehicleService::create($payload);
         $service->loadMissing('vehicle');
@@ -85,53 +76,25 @@ class VehicleServiceController extends Controller
             'vehicleId' => ['sometimes', 'integer', 'exists:vehicles,id'],
             'serviceCenter' => ['sometimes', 'nullable', 'string', 'max:255'],
             'serviceType' => ['sometimes', 'nullable', 'string', 'max:255'],
-            'serviceDateOut' => ['sometimes', 'date'],
+            'serviceDate' => ['sometimes', 'date'],
+            'serviceDateOut' => ['sometimes', 'nullable', 'date'],
             'serviceDateIn' => ['sometimes', 'nullable', 'date'],
-            'odometerOut' => ['sometimes', 'integer', 'min:0'],
+            'partsReplaced' => ['sometimes', 'nullable', 'string'],
+            'odometerOut' => ['sometimes', 'nullable', 'integer', 'min:0'],
             'odometerIn' => ['sometimes', 'nullable', 'integer', 'min:0'],
-            'fuelOut' => ['sometimes', 'integer', 'min:0', 'max:100'],
+            'fuelOut' => ['sometimes', 'nullable', 'integer', 'min:0', 'max:100'],
             'fuelIn' => ['sometimes', 'nullable', 'integer', 'min:0', 'max:100'],
             'cost' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'notes' => ['sometimes', 'nullable', 'string'],
-            'status' => ['sometimes', Rule::in(['In Service', 'Returned'])],
+            'status' => ['sometimes', Rule::in(['In Service', 'Returned', 'Cancelled'])],
         ]);
 
-        $status = $validated['status'] ?? $vehicleService->status;
-
-        $serviceDateOut = $validated['serviceDateOut'] ?? optional($vehicleService->service_date_out)->format('Y-m-d');
-        $serviceDateIn = $validated['serviceDateIn'] ?? optional($vehicleService->service_date_in)->format('Y-m-d');
-
-        if ($serviceDateIn && $serviceDateOut && $serviceDateIn < $serviceDateOut) {
-            return response()->json([
-                'message' => 'Validation failed.',
-                'errors' => ['serviceDateIn' => ['The serviceDateIn must be a date after or equal to serviceDateOut.']],
-            ], 422);
+        $payload = $this->mapRequestToDb($validated);
+        if (array_key_exists('service_date', $payload)) {
+            $payload['service_date_out'] = $payload['service_date'];
         }
 
-        if ($status === 'Returned') {
-            $odometerIn = $validated['odometerIn'] ?? $vehicleService->odometer_in;
-            $fuelIn = $validated['fuelIn'] ?? $vehicleService->fuel_in;
-
-            $errors = [];
-            if (!$serviceDateIn) {
-                $errors['serviceDateIn'] = ['The serviceDateIn field is required when status is Returned.'];
-            }
-            if ($odometerIn === null) {
-                $errors['odometerIn'] = ['The odometerIn field is required when status is Returned.'];
-            }
-            if ($fuelIn === null) {
-                $errors['fuelIn'] = ['The fuelIn field is required when status is Returned.'];
-            }
-
-            if (!empty($errors)) {
-                return response()->json([
-                    'message' => 'Validation failed.',
-                    'errors' => $errors,
-                ], 422);
-            }
-        }
-
-        $vehicleService->update($this->mapRequestToDb($validated));
+        $vehicleService->update($payload);
         $vehicleService->refresh();
         $vehicleService->loadMissing('vehicle');
 
@@ -160,8 +123,10 @@ class VehicleServiceController extends Controller
             'vehicleId' => 'vehicle_id',
             'serviceCenter' => 'service_center',
             'serviceType' => 'service_type',
+            'serviceDate' => 'service_date',
             'serviceDateOut' => 'service_date_out',
             'serviceDateIn' => 'service_date_in',
+            'partsReplaced' => 'parts_replaced',
             'odometerOut' => 'odometer_out',
             'odometerIn' => 'odometer_in',
             'fuelOut' => 'fuel_out',
@@ -193,8 +158,10 @@ class VehicleServiceController extends Controller
             'plateNo' => $service->vehicle?->plate_no,
             'serviceCenter' => $service->service_center,
             'serviceType' => $service->service_type,
+            'serviceDate' => optional($service->service_date ?? $service->service_date_out)->format('Y-m-d'),
             'serviceDateOut' => optional($service->service_date_out)->format('Y-m-d'),
             'serviceDateIn' => optional($service->service_date_in)->format('Y-m-d'),
+            'partsReplaced' => $service->parts_replaced,
             'odometerOut' => $service->odometer_out,
             'odometerIn' => $service->odometer_in,
             'fuelOut' => $service->fuel_out,
