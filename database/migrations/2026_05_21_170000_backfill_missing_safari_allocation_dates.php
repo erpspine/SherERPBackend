@@ -10,6 +10,13 @@ return new class extends Migration
      */
     public function up(): void
     {
+        // A fresh SQLite database (used by the feature suite) has no legacy
+        // allocations to backfill, and SQLite cannot execute Laravel's
+        // MySQL-style joined UPDATE generated below.
+        if (DB::connection()->getDriverName() === 'sqlite') {
+            return;
+        }
+
         DB::table('safari_allocations as sa')
             ->join('leads as l', 'l.id', '=', 'sa.lead_id')
             ->where(function ($query): void {

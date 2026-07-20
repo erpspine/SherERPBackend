@@ -23,9 +23,11 @@ return new class extends Migration
             ->whereNull('service_date')
             ->update(['service_date' => DB::raw('service_date_out')]);
 
-        DB::statement('ALTER TABLE vehicle_services MODIFY service_date_out DATE NULL');
-        DB::statement('ALTER TABLE vehicle_services MODIFY odometer_out INT UNSIGNED NULL');
-        DB::statement('ALTER TABLE vehicle_services MODIFY fuel_out TINYINT UNSIGNED NULL');
+        if (DB::connection()->getDriverName() !== 'sqlite') {
+            DB::statement('ALTER TABLE vehicle_services MODIFY service_date_out DATE NULL');
+            DB::statement('ALTER TABLE vehicle_services MODIFY odometer_out INT UNSIGNED NULL');
+            DB::statement('ALTER TABLE vehicle_services MODIFY fuel_out TINYINT UNSIGNED NULL');
+        }
     }
 
     public function down(): void

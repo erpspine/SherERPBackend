@@ -18,12 +18,14 @@ return new class extends Migration
             $table->index(['vehicle_id', 'start_date', 'end_date'], 'safari_allocations_vehicle_date_idx');
         });
 
-        DB::table('safari_allocations as sa')
-            ->join('leads as l', 'l.id', '=', 'sa.lead_id')
-            ->update([
-                'sa.start_date' => DB::raw('DATE(l.start_date)'),
-                'sa.end_date' => DB::raw('DATE(l.end_date)'),
-            ]);
+        if (DB::connection()->getDriverName() !== 'sqlite') {
+            DB::table('safari_allocations as sa')
+                ->join('leads as l', 'l.id', '=', 'sa.lead_id')
+                ->update([
+                    'sa.start_date' => DB::raw('DATE(l.start_date)'),
+                    'sa.end_date' => DB::raw('DATE(l.end_date)'),
+                ]);
+        }
     }
 
     /**
