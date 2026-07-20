@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
     'incident_date',
     'vehicle_id',
     'lead_id',
+    'lease_allocation_id',
     'report_type',
     'description',
     'action_taken',
@@ -27,6 +28,11 @@ class IncidentReport extends Model
     public function lead(): BelongsTo
     {
         return $this->belongsTo(Lead::class);
+    }
+
+    public function leaseAllocation(): BelongsTo
+    {
+        return $this->belongsTo(LeaseAllocation::class);
     }
 
     /**

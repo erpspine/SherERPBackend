@@ -326,7 +326,7 @@ class UserController extends Controller
 
         $roles = $this->extractRoleNames($validated, true);
         $primaryRole = $roles[0];
-        $this->validateBlacklistFields($validated, $primaryRole);
+        $this->validateStatusReasonFields($validated, $primaryRole);
         $driverProfile = $this->extractDriverProfileFields($validated, $primaryRole, true);
 
         $plainPassword = Str::random(12);
@@ -345,7 +345,7 @@ class UserController extends Controller
                 'tour_guide_license' => $driverProfile['tour_guide_license'],
                 'role' => $primaryRole,
                 'status' => $validated['status'],
-                'blacklist_reason' => $validated['status'] === 'Blacklisted'
+                'blacklist_reason' => in_array($validated['status'], ['Inactive', 'Blacklisted'], true)
                     ? trim((string) ($validated['blacklist_reason'] ?? ''))
                     : null,
                 'receive_notifications' => (bool) ($validated['receive_notifications'] ?? false),
@@ -411,7 +411,7 @@ class UserController extends Controller
 
         $roles = $this->extractRoleNames($validated, false, $user);
         $primaryRole = $roles[0] ?? $user->role;
-        $this->validateBlacklistFields($validated, $primaryRole);
+        $this->validateStatusReasonFields($validated, $primaryRole);
         $driverProfile = $this->extractDriverProfileFields($validated, $primaryRole, false, $user);
         $user->update([
             'name' => $validated['name'],
@@ -424,7 +424,7 @@ class UserController extends Controller
             'tour_guide_license' => $driverProfile['tour_guide_license'],
             'role' => $primaryRole,
             'status' => $validated['status'],
-            'blacklist_reason' => $validated['status'] === 'Blacklisted'
+            'blacklist_reason' => in_array($validated['status'], ['Inactive', 'Blacklisted'], true)
                 ? trim((string) ($validated['blacklist_reason'] ?? ''))
                 : null,
             'receive_notifications' => (bool) ($validated['receive_notifications'] ?? false),
@@ -684,6 +684,8 @@ class UserController extends Controller
             'status' => $user->status,
             'blacklist_reason' => $user->blacklist_reason,
             'blacklistReason' => $user->blacklist_reason,
+            'status_reason' => $user->blacklist_reason,
+            'statusReason' => $user->blacklist_reason,
             'receive_notifications' => (bool) $user->receive_notifications,
             'last_login_at' => $user->last_login_at,
             'created_at' => $user->created_at,
@@ -898,9 +900,17 @@ class UserController extends Controller
     /**
      * @param array<string, mixed> $validated
      */
-    private function validateBlacklistFields(array $validated, ?string $role): void
+    private function validateStatusReasonFields(array $validated, ?string $role): void
     {
-        if (($validated['status'] ?? null) !== 'Blacklisted') {
+        $status = $validated['status'] ?? null;
+
+        if ($status === 'Inactive' && trim((string) ($validated['blacklist_reason'] ?? '')) === '') {
+            throw ValidationException::withMessages([
+                'blacklist_reason' => ['A reason is required for inactive users.'],
+            ]);
+        }
+
+        if ($status !== 'Blacklisted') {
             return;
         }
 
