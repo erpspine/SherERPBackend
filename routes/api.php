@@ -80,6 +80,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::delete('/inspections/{inspection}', [InspectionController::class, 'destroy']);
 
     Route::get('/incident-reports', [IncidentReportController::class, 'index'])->middleware('permission:vehicles.view');
+    Route::get('/incident-reports/export/excel', [IncidentReportController::class, 'exportExcel'])->middleware('permission:vehicles.view');
     Route::get('/incident-reports/{incidentReport}', [IncidentReportController::class, 'show'])->middleware('permission:vehicles.view');
     Route::post('/incident-reports', [IncidentReportController::class, 'store'])->middleware('permission:vehicles.update');
     Route::post('/incident-reports/{incidentReport}', [IncidentReportController::class, 'update'])->middleware('permission:vehicles.update');

@@ -8,26 +8,94 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class IncidentReportController extends Controller
 {
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
-        $reports = IncidentReport::query()
-            ->with([
-                'vehicle.assignedDriver:id,name,email',
-                'lead:id,booking_ref,client_company,group_name,start_date,end_date',
-                'leaseAllocation.leaseContract:id,client_name,group_name,lease_type,start_date,end_date',
-                'leaseAllocation.vehicle:id,vehicle_no,plate_no,make,model',
-                'leaseAllocation.driver:id,name,email',
-            ])
-            ->latest('incident_date')
-            ->latest('id')
-            ->get();
+        $reports = $this->filteredReportQuery($request)->get();
 
         return response()->json([
             'message' => 'Incident reports fetched successfully.',
             'incidentReports' => $reports->map(fn(IncidentReport $report): array => $this->transformIncidentReport($report))->values(),
+        ]);
+    }
+
+    public function exportExcel(Request $request): StreamedResponse
+    {
+        $rows = $this->filteredReportQuery($request)
+            ->get()
+            ->map(fn(IncidentReport $report): array => $this->transformIncidentReport($report))
+            ->values();
+
+        $filename = 'performance-dashboard-' . now()->format('Ymd-His') . '.csv';
+
+        return response()->streamDownload(function () use ($rows): void {
+            $output = fopen('php://output', 'w');
+            if ($output === false) {
+                return;
+            }
+
+            fwrite($output, "\xEF\xBB\xBF");
+            fputcsv($output, [
+                'Date',
+                'Vehicle',
+                'Plate No',
+                'Driver',
+                'Booking Type',
+                'Booking',
+                'Client',
+                'Report Type',
+                'Description',
+                'Action Taken',
+                'Status',
+                'Closing Remarks',
+                'Photos Count',
+            ]);
+
+            foreach ($rows as $row) {
+                $vehicle = is_array($row['vehicle'] ?? null) ? $row['vehicle'] : [];
+                $driver = is_array($vehicle['assignedDriver'] ?? null) ? $vehicle['assignedDriver'] : [];
+                $safari = is_array($row['safari'] ?? null) ? $row['safari'] : null;
+                $lease = is_array($row['leaseAllocation'] ?? null) ? $row['leaseAllocation'] : null;
+                $leaseContract = is_array($lease['contract'] ?? null) ? $lease['contract'] : [];
+
+                $bookingType = $lease !== null ? 'Long Term Lease' : 'Short Term Booking';
+                $booking = $lease !== null
+                    ? trim(implode(' - ', array_filter([
+                        'Lease #' . ($lease['id'] ?? ''),
+                        $lease['groupName'] ?? null,
+                        $leaseContract['leaseType'] ?? null,
+                    ])))
+                    : trim(implode(' - ', array_filter([
+                        $safari['bookingRef'] ?? null,
+                        $safari['groupName'] ?? null,
+                    ])));
+                $client = $lease !== null
+                    ? (string) ($leaseContract['clientName'] ?? '')
+                    : (string) ($safari['clientCompany'] ?? '');
+
+                fputcsv($output, [
+                    (string) ($row['date'] ?? ''),
+                    (string) ($vehicle['vehicleNo'] ?? ''),
+                    (string) ($vehicle['plateNo'] ?? ''),
+                    (string) ($driver['name'] ?? ''),
+                    $bookingType,
+                    $booking,
+                    $client,
+                    (string) ($row['reportType'] ?? ''),
+                    (string) ($row['description'] ?? ''),
+                    (string) ($row['actionTaken'] ?? ''),
+                    (string) ($row['status'] ?? ''),
+                    (string) ($row['closingRemarks'] ?? ''),
+                    (string) count(is_array($row['photos'] ?? null) ? $row['photos'] : []),
+                ]);
+            }
+
+            fclose($output);
+        }, $filename, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
         ]);
     }
 
@@ -115,6 +183,86 @@ class IncidentReportController extends Controller
         return response()->json([
             'message' => 'Incident report deleted successfully.',
         ]);
+    }
+
+    private function filteredReportQuery(Request $request)
+    {
+        $query = IncidentReport::query()
+            ->with([
+                'vehicle.assignedDriver:id,name,email',
+                'lead:id,booking_ref,client_company,group_name,start_date,end_date',
+                'leaseAllocation.leaseContract:id,client_name,group_name,lease_type,start_date,end_date',
+                'leaseAllocation.vehicle:id,vehicle_no,plate_no,make,model',
+                'leaseAllocation.driver:id,name,email',
+            ]);
+
+        $dateFrom = trim((string) $request->input('dateFrom', ''));
+        if ($dateFrom !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateFrom)) {
+            $query->whereDate('incident_date', '>=', $dateFrom);
+        }
+
+        $dateTo = trim((string) $request->input('dateTo', ''));
+        if ($dateTo !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateTo)) {
+            $query->whereDate('incident_date', '<=', $dateTo);
+        }
+
+        $status = trim((string) $request->input('status', ''));
+        if ($status !== '' && in_array($status, ['Open', 'Closed'], true)) {
+            $query->where('status', $status);
+        }
+
+        $reportType = trim((string) $request->input('reportType', ''));
+        if ($reportType !== '' && in_array($reportType, ['Accident', 'Review', 'Routine'], true)) {
+            $query->where('report_type', $reportType);
+        }
+
+        if ($request->filled('vehicleId')) {
+            $query->where('vehicle_id', (int) $request->input('vehicleId'));
+        }
+
+        if ($request->filled('driverId')) {
+            $driverId = (int) $request->input('driverId');
+            $query->where(function ($q) use ($driverId): void {
+                $q->whereHas('vehicle', fn($vehicleQuery) => $vehicleQuery->where('assigned_driver_id', $driverId))
+                    ->orWhereHas('leaseAllocation', fn($leaseQuery) => $leaseQuery->where('driver_id', $driverId));
+            });
+        }
+
+        $search = trim((string) $request->input('search', ''));
+        if ($search !== '') {
+            $query->where(function ($q) use ($search): void {
+                $q->where('description', 'like', '%' . $search . '%')
+                    ->orWhere('action_taken', 'like', '%' . $search . '%')
+                    ->orWhere('closing_remarks', 'like', '%' . $search . '%')
+                    ->orWhereHas('vehicle', function ($vehicleQuery) use ($search): void {
+                        $vehicleQuery
+                            ->where('vehicle_no', 'like', '%' . $search . '%')
+                            ->orWhere('plate_no', 'like', '%' . $search . '%')
+                            ->orWhereHas('assignedDriver', fn($driverQuery) => $driverQuery->where('name', 'like', '%' . $search . '%'));
+                    })
+                    ->orWhereHas('lead', function ($leadQuery) use ($search): void {
+                        $leadQuery
+                            ->where('booking_ref', 'like', '%' . $search . '%')
+                            ->orWhere('client_company', 'like', '%' . $search . '%')
+                            ->orWhere('group_name', 'like', '%' . $search . '%');
+                    })
+                    ->orWhereHas('leaseAllocation', function ($leaseQuery) use ($search): void {
+                        $leaseQuery
+                            ->where('group_name', 'like', '%' . $search . '%')
+                            ->orWhereHas('driver', fn($driverQuery) => $driverQuery->where('name', 'like', '%' . $search . '%'))
+                            ->orWhereHas('leaseContract', function ($contractQuery) use ($search): void {
+                                $contractQuery
+                                    ->where('client_name', 'like', '%' . $search . '%')
+                                    ->orWhere('group_name', 'like', '%' . $search . '%')
+                                    ->orWhere('lease_type', 'like', '%' . $search . '%');
+                            });
+                    });
+            });
+        }
+
+        return $query
+            ->latest('incident_date')
+            ->latest('id');
     }
 
     /**
