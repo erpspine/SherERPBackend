@@ -11,6 +11,7 @@ class Inspection extends Model
     protected $fillable = [
         'user_id',
         'lead_id',
+        'lease_allocation_id',
         'vehicle_id',
         'type',
         'odometer_out',
@@ -37,6 +38,11 @@ class Inspection extends Model
     public function vehicle(): BelongsTo
     {
         return $this->belongsTo(Vehicle::class);
+    }
+
+    public function leaseAllocation(): BelongsTo
+    {
+        return $this->belongsTo(LeaseAllocation::class);
     }
 
     public function items(): HasMany

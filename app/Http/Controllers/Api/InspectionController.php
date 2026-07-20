@@ -30,7 +30,7 @@ class InspectionController extends Controller
     {
         $inspections = Inspection::query()
             ->where('user_id', $request->user()->id)
-            ->with('items', 'images', 'lead', 'vehicle')
+            ->with('items', 'images', 'lead', 'vehicle', 'leaseAllocation.leaseContract')
             ->latest('id')
             ->get();
 
@@ -67,7 +67,8 @@ class InspectionController extends Controller
         $validated = $request->validate([
             'type' => ['required', Rule::in(self::INSPECTION_TYPES)],
             'checklistType' => ['required', Rule::in(self::INSPECTION_TYPES)],
-            'lead.id' => ['required', 'exists:leads,id'],
+            'lead.id' => ['nullable', 'required_without:leaseAllocationId', 'exists:leads,id'],
+            'leaseAllocationId' => ['nullable', 'required_without:lead.id', 'exists:lease_allocations,id'],
             'vehicle.id' => ['required', 'exists:vehicles,id'],
             'parking_location' => ['nullable', 'string', 'max:255'],
             'parkingLocation' => ['nullable', 'string', 'max:255'],
@@ -90,7 +91,8 @@ class InspectionController extends Controller
         ]);
 
         $existingInspection = $this->findDuplicateInspection(
-            leadId: (int) $validated['lead']['id'],
+            leadId: isset($validated['lead']['id']) ? (int) $validated['lead']['id'] : null,
+            leaseAllocationId: isset($validated['leaseAllocationId']) ? (int) $validated['leaseAllocationId'] : null,
             vehicleId: (int) $validated['vehicle']['id'],
             type: (string) $validated['type'],
         );
@@ -103,7 +105,8 @@ class InspectionController extends Controller
         }
 
         if ((string) $validated['type'] === 'post_departure' && ! $this->hasPreDepartureInspection(
-            leadId: (int) $validated['lead']['id'],
+            leadId: isset($validated['lead']['id']) ? (int) $validated['lead']['id'] : null,
+            leaseAllocationId: isset($validated['leaseAllocationId']) ? (int) $validated['leaseAllocationId'] : null,
             vehicleId: (int) $validated['vehicle']['id'],
         )) {
             return response()->json([
@@ -121,7 +124,8 @@ class InspectionController extends Controller
         $inspection = DB::transaction(function () use ($request, $validated, $odometerPayload, $parkingLocation): Inspection {
             $inspection = Inspection::create([
                 'user_id' => $request->user()->id,
-                'lead_id' => $validated['lead']['id'],
+                'lead_id' => $validated['lead']['id'] ?? null,
+                'lease_allocation_id' => $validated['leaseAllocationId'] ?? null,
                 'vehicle_id' => $validated['vehicle']['id'],
                 'type' => $validated['type'],
                 'odometer_out' => $odometerPayload['odometer_out'],
@@ -156,7 +160,7 @@ class InspectionController extends Controller
             return $inspection;
         });
 
-        $inspection->load('items', 'images', 'lead', 'vehicle');
+        $inspection->load('items', 'images', 'lead', 'vehicle', 'leaseAllocation.leaseContract');
 
         return response()->json([
             'message' => 'Inspection submitted successfully.',
@@ -191,7 +195,8 @@ class InspectionController extends Controller
         $targetType = (string) ($validated['type'] ?? $inspection->type);
 
         $existingInspection = $this->findDuplicateInspection(
-            leadId: (int) $inspection->lead_id,
+            leadId: $inspection->lead_id !== null ? (int) $inspection->lead_id : null,
+            leaseAllocationId: $inspection->lease_allocation_id !== null ? (int) $inspection->lease_allocation_id : null,
             vehicleId: (int) $inspection->vehicle_id,
             type: $targetType,
             ignoreInspectionId: (int) $inspection->id,
@@ -205,7 +210,8 @@ class InspectionController extends Controller
         }
 
         if ($targetType === 'post_departure' && $inspection->type !== 'post_departure' && ! $this->hasPreDepartureInspection(
-            leadId: (int) $inspection->lead_id,
+            leadId: $inspection->lead_id !== null ? (int) $inspection->lead_id : null,
+            leaseAllocationId: $inspection->lease_allocation_id !== null ? (int) $inspection->lease_allocation_id : null,
             vehicleId: (int) $inspection->vehicle_id,
             ignoreInspectionId: (int) $inspection->id,
         )) {
@@ -365,11 +371,19 @@ class InspectionController extends Controller
             'id' => $inspection->id,
             'type' => $inspection->type,
             'remarks' => $inspection->remarks,
-            'lead' => [
+            'lead' => $inspection->lead ? [
                 'id' => $inspection->lead->id,
                 'clientCompany' => $inspection->lead->client_company,
                 'bookingRef' => $inspection->lead->booking_ref ?? null,
+            ] : [
+                'id' => 'lease:' . $inspection->lease_allocation_id,
+                'leaseAllocationId' => $inspection->lease_allocation_id,
+                'clientCompany' => $inspection->leaseAllocation?->leaseContract?->client_name ?? 'Long-Term Lease',
+                'bookingRef' => $inspection->leaseAllocation?->group_name
+                    ?: $inspection->leaseAllocation?->leaseContract?->group_name
+                    ?: 'Lease #' . $inspection->lease_allocation_id,
             ],
+            'leaseAllocationId' => $inspection->lease_allocation_id,
             'vehicle' => [
                 'id' => $inspection->vehicle->id,
                 'make' => $inspection->vehicle->make,
@@ -560,13 +574,15 @@ class InspectionController extends Controller
     }
 
     private function findDuplicateInspection(
-        int $leadId,
+        ?int $leadId,
+        ?int $leaseAllocationId,
         int $vehicleId,
         string $type,
         ?int $ignoreInspectionId = null,
     ): ?Inspection {
         $query = Inspection::query()
-            ->where('lead_id', $leadId)
+            ->when($leadId !== null, fn($query) => $query->where('lead_id', $leadId))
+            ->when($leaseAllocationId !== null, fn($query) => $query->where('lease_allocation_id', $leaseAllocationId))
             ->where('vehicle_id', $vehicleId)
             ->where('type', $type);
 
@@ -578,12 +594,14 @@ class InspectionController extends Controller
     }
 
     private function hasPreDepartureInspection(
-        int $leadId,
+        ?int $leadId,
+        ?int $leaseAllocationId,
         int $vehicleId,
         ?int $ignoreInspectionId = null,
     ): bool {
         $query = Inspection::query()
-            ->where('lead_id', $leadId)
+            ->when($leadId !== null, fn($query) => $query->where('lead_id', $leadId))
+            ->when($leaseAllocationId !== null, fn($query) => $query->where('lease_allocation_id', $leaseAllocationId))
             ->where('vehicle_id', $vehicleId)
             ->where('type', 'pre_departure');
 
