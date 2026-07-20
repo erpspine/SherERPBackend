@@ -17,22 +17,33 @@ class LeaseAllocationController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        $compact = $request->boolean('compact');
         $allocations = $this->filteredQuery($request)
             ->orderByDesc('id')
             ->get();
 
         return response()->json([
             'message' => 'Lease allocations fetched successfully.',
-            'allocations' => $allocations->map(fn(LeaseAllocation $a): array => $this->transform($a))->values(),
+            'allocations' => $allocations->map(
+                fn(LeaseAllocation $a): array => $compact
+                    ? $this->transformCompact($a)
+                    : $this->transform($a)
+            )->values(),
         ]);
     }
 
     public function mine(Request $request): JsonResponse
     {
+        $compact = $request->boolean('compact');
         $allocations = LeaseAllocation::query()
-            ->with(['leaseContract', 'vehicle', 'driver:id,name,email'])
-            ->withCount('odometerLogs')
-            ->withMax('odometerLogs', 'recorded_at')
+            ->when(
+                $compact,
+                fn($query) => $query->with(['leaseContract', 'vehicle']),
+                fn($query) => $query
+                    ->with(['leaseContract', 'vehicle', 'driver:id,name,email'])
+                    ->withCount('odometerLogs')
+                    ->withMax('odometerLogs', 'recorded_at'),
+            )
             ->where('driver_id', $request->user()->id)
             ->orderByDesc('id')
             ->get();
@@ -40,7 +51,9 @@ class LeaseAllocationController extends Controller
         return response()->json([
             'message' => 'Driver lease allocations fetched successfully.',
             'allocations' => $allocations
-                ->map(fn(LeaseAllocation $allocation): array => $this->transform($allocation))
+                ->map(fn(LeaseAllocation $allocation): array => $compact
+                    ? $this->transformCompact($allocation)
+                    : $this->transform($allocation))
                 ->values(),
         ]);
     }
@@ -240,10 +253,16 @@ class LeaseAllocationController extends Controller
 
     private function filteredQuery(Request $request)
     {
+        $compact = $request->boolean('compact');
         $query = LeaseAllocation::query()
-            ->with(['leaseContract', 'vehicle', 'driver:id,name,email'])
-            ->withCount('odometerLogs')
-            ->withMax('odometerLogs', 'recorded_at');
+            ->when(
+                $compact,
+                fn($query) => $query->with(['leaseContract', 'vehicle']),
+                fn($query) => $query
+                    ->with(['leaseContract', 'vehicle', 'driver:id,name,email'])
+                    ->withCount('odometerLogs')
+                    ->withMax('odometerLogs', 'recorded_at'),
+            );
 
         if ($request->filled('leaseContractId')) {
             $query->where('lease_contract_id', (int) $request->input('leaseContractId'));
@@ -337,6 +356,29 @@ class LeaseAllocationController extends Controller
             'notes' => $allocation->notes,
             'createdAt' => optional($allocation->created_at)->toIso8601String(),
             'updatedAt' => optional($allocation->updated_at)->toIso8601String(),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function transformCompact(LeaseAllocation $allocation): array
+    {
+        return [
+            'id' => $allocation->id,
+            'assignmentType' => 'long_term_lease',
+            'groupName' => $allocation->group_name,
+            'status' => $allocation->status,
+            'contract' => $allocation->leaseContract ? [
+                'id' => $allocation->leaseContract->id,
+                'clientName' => $allocation->leaseContract->client_name,
+                'groupName' => $allocation->leaseContract->group_name,
+            ] : null,
+            'vehicle' => $allocation->vehicle ? [
+                'id' => $allocation->vehicle->id,
+                'vehicleNo' => $allocation->vehicle->vehicle_no,
+                'plateNo' => $allocation->vehicle->plate_no,
+                'make' => $allocation->vehicle->make,
+                'model' => $allocation->vehicle->model,
+            ] : null,
         ];
     }
 
