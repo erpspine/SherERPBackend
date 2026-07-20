@@ -28,11 +28,15 @@ class InspectionController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $inspections = Inspection::query()
-            ->where('user_id', $request->user()->id)
+        $query = Inspection::query()
             ->with('items', 'images', 'lead', 'vehicle', 'leaseAllocation.leaseContract')
-            ->latest('id')
-            ->get();
+            ->latest('id');
+
+        if (! $this->canViewAllInspections($request)) {
+            $query->where('user_id', $request->user()->id);
+        }
+
+        $inspections = $query->get();
 
         return response()->json([
             'message' => 'Inspections fetched successfully.',
@@ -45,13 +49,13 @@ class InspectionController extends Controller
      */
     public function show(Request $request, Inspection $inspection): JsonResponse
     {
-        if ($inspection->user_id !== $request->user()->id) {
+        if (! $this->canViewInspection($request, $inspection)) {
             return response()->json([
                 'message' => 'You are not authorized to access this inspection.',
             ], 403);
         }
 
-        $inspection->load('items', 'images', 'lead', 'vehicle');
+        $inspection->load('items', 'images', 'lead', 'vehicle', 'leaseAllocation.leaseContract');
 
         return response()->json([
             'message' => 'Inspection fetched successfully.',
@@ -173,7 +177,7 @@ class InspectionController extends Controller
      */
     public function update(Request $request, Inspection $inspection): JsonResponse
     {
-        if ($inspection->user_id !== $request->user()->id) {
+        if (! $this->canUpdateInspection($request, $inspection)) {
             return response()->json([
                 'message' => 'You are not authorized to access this inspection.',
             ], 403);
@@ -238,7 +242,7 @@ class InspectionController extends Controller
             $this->syncVehicleAfterPostDeparture($inspection, $request);
         });
 
-        $inspection->load('items', 'images', 'lead', 'vehicle');
+        $inspection->load('items', 'images', 'lead', 'vehicle', 'leaseAllocation.leaseContract');
 
         return response()->json([
             'message' => 'Inspection updated successfully.',
@@ -251,7 +255,7 @@ class InspectionController extends Controller
      */
     public function destroy(Request $request, Inspection $inspection): JsonResponse
     {
-        if ($inspection->user_id !== $request->user()->id) {
+        if (! $this->canDeleteInspection($request, $inspection)) {
             return response()->json([
                 'message' => 'You are not authorized to access this inspection.',
             ], 403);
@@ -269,13 +273,13 @@ class InspectionController extends Controller
      */
     public function pdf(Request $request, Inspection $inspection): Response
     {
-        if ($inspection->user_id !== $request->user()->id) {
+        if (! $this->canViewInspection($request, $inspection)) {
             return response()->json([
                 'message' => 'You are not authorized to access this inspection.',
             ], 403);
         }
 
-        $inspection->load('items', 'images', 'lead', 'vehicle');
+        $inspection->load('items', 'images', 'lead', 'vehicle', 'leaseAllocation.leaseContract');
 
         $company = [
             'name' => Setting::get('company_name', config('app.name')),
@@ -331,7 +335,7 @@ class InspectionController extends Controller
      */
     public function uploadImage(Request $request, Inspection $inspection): JsonResponse
     {
-        if ($inspection->user_id !== $request->user()->id) {
+        if (! $this->canUpdateInspection($request, $inspection)) {
             return response()->json([
                 'message' => 'You are not authorized to upload images for this inspection.',
             ], 403);
@@ -356,7 +360,7 @@ class InspectionController extends Controller
             'image' => [
                 'id' => $image->id,
                 'path' => $path,
-                'url' => Storage::disk('public')->url($path),
+                'url' => Storage::url($path),
                 'sortOrder' => $image->sort_order,
             ],
         ], 201);
@@ -414,6 +418,37 @@ class InspectionController extends Controller
             'createdAt' => $inspection->created_at?->toIso8601String(),
             'updatedAt' => $inspection->updated_at?->toIso8601String(),
         ];
+    }
+
+    private function canViewAllInspections(Request $request): bool
+    {
+        $user = $request->user();
+
+        return $user !== null
+            && ! $user->hasRole('Driver')
+            && $user->can('vehicles.view');
+    }
+
+    private function canViewInspection(Request $request, Inspection $inspection): bool
+    {
+        return (int) $inspection->user_id === (int) $request->user()->id
+            || $this->canViewAllInspections($request);
+    }
+
+    private function canUpdateInspection(Request $request, Inspection $inspection): bool
+    {
+        $user = $request->user();
+
+        return (int) $inspection->user_id === (int) $user->id
+            || ($user !== null && ! $user->hasRole('Driver') && $user->can('vehicles.update'));
+    }
+
+    private function canDeleteInspection(Request $request, Inspection $inspection): bool
+    {
+        $user = $request->user();
+
+        return (int) $inspection->user_id === (int) $user->id
+            || ($user !== null && ! $user->hasRole('Driver') && $user->can('vehicles.delete'));
     }
 
     private function resolveLogoDataUri(): ?string
