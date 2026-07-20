@@ -18,10 +18,16 @@ class SafariAllocationController extends Controller
     {
         $this->authorize('viewAny', SafariAllocation::class);
 
+        $compact = $request->boolean('compact');
         $query = SafariAllocation::query()
-            ->with(['lead.quotations', 'proformaInvoice', 'vehicle', 'driver'])
-            ->withCount('odometerLogs')
-            ->withMax('odometerLogs', 'recorded_at')
+            ->when(
+                $compact,
+                fn($query) => $query->with(['lead', 'vehicle']),
+                fn($query) => $query
+                    ->with(['lead.quotations', 'proformaInvoice', 'vehicle', 'driver'])
+                    ->withCount('odometerLogs')
+                    ->withMax('odometerLogs', 'recorded_at'),
+            )
             ->latest('id');
 
         if ($request->user()?->hasRole('Driver')) {
@@ -32,7 +38,11 @@ class SafariAllocationController extends Controller
 
         return response()->json([
             'message' => 'Safari allocations fetched successfully.',
-            'allocations' => $allocations->map(fn(SafariAllocation $allocation): array => $this->transform($allocation))->values(),
+            'allocations' => $allocations->map(
+                fn(SafariAllocation $allocation): array => $compact
+                    ? $this->transformCompact($allocation)
+                    : $this->transform($allocation)
+            )->values(),
         ]);
     }
 
@@ -225,6 +235,30 @@ class SafariAllocationController extends Controller
             'odometerLogCount' => (int) ($allocation->odometer_logs_count ?? 0),
             'latestOdometerLogAt' => $allocation->odometer_logs_max_recorded_at,
             'latest_odometer_log_at' => $allocation->odometer_logs_max_recorded_at,
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function transformCompact(SafariAllocation $allocation): array
+    {
+        return [
+            'id' => $allocation->id,
+            'leadId' => $allocation->lead_id,
+            'vehicleId' => $allocation->vehicle_id,
+            'status' => $allocation->status,
+            'lead' => $allocation->lead ? [
+                'id' => $allocation->lead->id,
+                'bookingRef' => $allocation->lead->booking_ref,
+                'clientCompany' => $allocation->lead->client_company,
+                'groupName' => $allocation->lead->group_name,
+            ] : null,
+            'vehicle' => $allocation->vehicle ? [
+                'id' => $allocation->vehicle->id,
+                'vehicleNo' => $allocation->vehicle->vehicle_no,
+                'plateNo' => $allocation->vehicle->plate_no,
+                'make' => $allocation->vehicle->make,
+                'model' => $allocation->vehicle->model,
+            ] : null,
         ];
     }
 

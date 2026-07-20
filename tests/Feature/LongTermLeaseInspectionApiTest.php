@@ -45,6 +45,13 @@ class LongTermLeaseInspectionApiTest extends TestCase
 
         Sanctum::actingAs($user);
 
+        $this->getJson('/api/my-lease-allocations?compact=1')
+            ->assertOk()
+            ->assertJsonCount(1, 'allocations')
+            ->assertJsonPath('allocations.0.id', $allocation->id)
+            ->assertJsonPath('allocations.0.contract.clientName', 'Long Term Test Client')
+            ->assertJsonMissingPath('allocations.0.itinerary');
+
         $preResponse = $this->postJson('/api/inspections', $this->payload(
             allocationId: $allocation->id,
             vehicleId: $vehicle->id,
