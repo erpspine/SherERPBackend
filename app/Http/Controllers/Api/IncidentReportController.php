@@ -14,7 +14,13 @@ class IncidentReportController extends Controller
     public function index(): JsonResponse
     {
         $reports = IncidentReport::query()
-            ->with(['vehicle.assignedDriver:id,name,email', 'lead:id,booking_ref,client_company,group_name,start_date,end_date'])
+            ->with([
+                'vehicle.assignedDriver:id,name,email',
+                'lead:id,booking_ref,client_company,group_name,start_date,end_date',
+                'leaseAllocation.leaseContract:id,client_name,group_name,lease_type,start_date,end_date',
+                'leaseAllocation.vehicle:id,vehicle_no,plate_no,make,model',
+                'leaseAllocation.driver:id,name,email',
+            ])
             ->latest('incident_date')
             ->latest('id')
             ->get();
@@ -27,7 +33,13 @@ class IncidentReportController extends Controller
 
     public function show(IncidentReport $incidentReport): JsonResponse
     {
-        $incidentReport->loadMissing(['vehicle.assignedDriver:id,name,email', 'lead:id,booking_ref,client_company,group_name,start_date,end_date']);
+        $incidentReport->loadMissing([
+            'vehicle.assignedDriver:id,name,email',
+            'lead:id,booking_ref,client_company,group_name,start_date,end_date',
+            'leaseAllocation.leaseContract:id,client_name,group_name,lease_type,start_date,end_date',
+            'leaseAllocation.vehicle:id,vehicle_no,plate_no,make,model',
+            'leaseAllocation.driver:id,name,email',
+        ]);
 
         return response()->json([
             'message' => 'Incident report fetched successfully.',
@@ -41,7 +53,13 @@ class IncidentReportController extends Controller
         $validated['photos'] = $this->storeUploadedPhotos($request);
 
         $report = IncidentReport::create($this->mapRequestToDb($validated));
-        $report->loadMissing(['vehicle.assignedDriver:id,name,email', 'lead:id,booking_ref,client_company,group_name,start_date,end_date']);
+        $report->loadMissing([
+            'vehicle.assignedDriver:id,name,email',
+            'lead:id,booking_ref,client_company,group_name,start_date,end_date',
+            'leaseAllocation.leaseContract:id,client_name,group_name,lease_type,start_date,end_date',
+            'leaseAllocation.vehicle:id,vehicle_no,plate_no,make,model',
+            'leaseAllocation.driver:id,name,email',
+        ]);
 
         return response()->json([
             'message' => 'Incident report created successfully.',
@@ -72,7 +90,13 @@ class IncidentReportController extends Controller
 
         $incidentReport->update($this->mapRequestToDb($validated));
         $incidentReport->refresh();
-        $incidentReport->loadMissing(['vehicle.assignedDriver:id,name,email', 'lead:id,booking_ref,client_company,group_name,start_date,end_date']);
+        $incidentReport->loadMissing([
+            'vehicle.assignedDriver:id,name,email',
+            'lead:id,booking_ref,client_company,group_name,start_date,end_date',
+            'leaseAllocation.leaseContract:id,client_name,group_name,lease_type,start_date,end_date',
+            'leaseAllocation.vehicle:id,vehicle_no,plate_no,make,model',
+            'leaseAllocation.driver:id,name,email',
+        ]);
 
         return response()->json([
             'message' => 'Incident report updated successfully.',
@@ -103,6 +127,7 @@ class IncidentReportController extends Controller
             'date' => [$required, 'date'],
             'vehicleId' => [$required, 'integer', 'exists:vehicles,id'],
             'safariId' => ['nullable', 'integer', 'exists:leads,id'],
+            'leaseAllocationId' => ['nullable', 'integer', 'exists:lease_allocations,id'],
             'reportType' => [$required, Rule::in(['Accident', 'Review', 'Routine'])],
             'description' => [$required, 'string'],
             'actionTaken' => ['nullable', 'string'],
@@ -119,6 +144,14 @@ class IncidentReportController extends Controller
         if ($status === 'Closed' && trim((string) $closingRemarks) === '') {
             $request->validate([
                 'closingRemarks' => ['required', 'string'],
+            ]);
+        }
+
+        if (! empty($validated['safariId']) && ! empty($validated['leaseAllocationId'])) {
+            $request->validate([
+                'leaseAllocationId' => ['prohibited'],
+            ], [
+                'leaseAllocationId.prohibited' => 'Select either a short-term booking or a long-term lease allocation, not both.',
             ]);
         }
 
@@ -154,6 +187,7 @@ class IncidentReportController extends Controller
             'date' => 'incident_date',
             'vehicleId' => 'vehicle_id',
             'safariId' => 'lead_id',
+            'leaseAllocationId' => 'lease_allocation_id',
             'reportType' => 'report_type',
             'description' => 'description',
             'actionTaken' => 'action_taken',
@@ -167,6 +201,14 @@ class IncidentReportController extends Controller
             if (isset($map[$key])) {
                 $payload[$map[$key]] = $value;
             }
+        }
+
+        if (array_key_exists('safariId', $validated)) {
+            $payload['lease_allocation_id'] = null;
+        }
+
+        if (array_key_exists('leaseAllocationId', $validated)) {
+            $payload['lead_id'] = null;
         }
 
         return $payload;
@@ -184,6 +226,7 @@ class IncidentReportController extends Controller
             'date' => optional($report->incident_date)->format('Y-m-d'),
             'vehicleId' => $report->vehicle_id,
             'safariId' => $report->lead_id,
+            'leaseAllocationId' => $report->lease_allocation_id,
             'reportType' => $report->report_type,
             'description' => $report->description,
             'actionTaken' => $report->action_taken,
@@ -213,6 +256,34 @@ class IncidentReportController extends Controller
                 'groupName' => $report->lead->group_name,
                 'startDate' => optional($report->lead->start_date)->format('Y-m-d'),
                 'endDate' => optional($report->lead->end_date)->format('Y-m-d'),
+            ] : null,
+            'leaseAllocation' => $report->leaseAllocation ? [
+                'id' => $report->leaseAllocation->id,
+                'assignmentType' => 'long_term_lease',
+                'groupName' => $report->leaseAllocation->group_name,
+                'startDate' => optional($report->leaseAllocation->start_date)->format('Y-m-d'),
+                'endDate' => optional($report->leaseAllocation->end_date)->format('Y-m-d'),
+                'status' => $report->leaseAllocation->status,
+                'contract' => $report->leaseAllocation->leaseContract ? [
+                    'id' => $report->leaseAllocation->leaseContract->id,
+                    'clientName' => $report->leaseAllocation->leaseContract->client_name,
+                    'groupName' => $report->leaseAllocation->leaseContract->group_name,
+                    'leaseType' => $report->leaseAllocation->leaseContract->lease_type,
+                    'startDate' => optional($report->leaseAllocation->leaseContract->start_date)->format('Y-m-d'),
+                    'endDate' => optional($report->leaseAllocation->leaseContract->end_date)->format('Y-m-d'),
+                ] : null,
+                'vehicle' => $report->leaseAllocation->vehicle ? [
+                    'id' => $report->leaseAllocation->vehicle->id,
+                    'vehicleNo' => $report->leaseAllocation->vehicle->vehicle_no,
+                    'plateNo' => $report->leaseAllocation->vehicle->plate_no,
+                    'make' => $report->leaseAllocation->vehicle->make,
+                    'model' => $report->leaseAllocation->vehicle->model,
+                ] : null,
+                'driver' => $report->leaseAllocation->driver ? [
+                    'id' => $report->leaseAllocation->driver->id,
+                    'name' => $report->leaseAllocation->driver->name,
+                    'email' => $report->leaseAllocation->driver->email,
+                ] : null,
             ] : null,
             'createdAt' => $report->created_at?->toISOString(),
             'updatedAt' => $report->updated_at?->toISOString(),
