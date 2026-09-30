@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 #[Fillable([
     'lead_id',
@@ -66,6 +67,16 @@ class JobCard extends Model
     public function leaseAllocation(): BelongsTo
     {
         return $this->belongsTo(LeaseAllocation::class);
+    }
+
+    public function perDiemVouchers(): HasMany
+    {
+        return $this->hasMany(PerDiemVoucher::class);
+    }
+
+    public function safariAllocations(): HasMany
+    {
+        return $this->hasMany(SafariAllocation::class, 'lead_id', 'lead_id');
     }
 
     /**

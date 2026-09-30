@@ -7,6 +7,8 @@ use Spatie\Permission\Middleware\PermissionMiddleware;
 use Spatie\Permission\Middleware\RoleMiddleware;
 use Spatie\Permission\Middleware\RoleOrPermissionMiddleware;
 use App\Http\Middleware\ValidateLeadApiKey;
+use App\Http\Middleware\RestrictDeletes;
+use App\Http\Middleware\AuditMutations;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -21,6 +23,8 @@ return Application::configure(basePath: dirname(__DIR__))
             'permission' => PermissionMiddleware::class,
             'role_or_permission' => RoleOrPermissionMiddleware::class,
             'validate.lead.api.key' => ValidateLeadApiKey::class,
+            'restrict.deletes' => RestrictDeletes::class,
+            'audit.mutations' => AuditMutations::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

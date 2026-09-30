@@ -5,10 +5,19 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 #[Fillable([
+    'case_reference',
+    'safari_allocation_id',
+    'performance_data',
+    'performance_revision',
     'incident_date',
     'vehicle_id',
+    'driver_user_id',
+    'driver_name',
+    'driver_email',
+    'driver_phone',
     'lead_id',
     'lease_allocation_id',
     'report_type',
@@ -20,6 +29,11 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 ])]
 class IncidentReport extends Model
 {
+    public function attachments(): HasMany
+    {
+        return $this->hasMany(IncidentAttachment::class)->latest('id');
+    }
+
     public function vehicle(): BelongsTo
     {
         return $this->belongsTo(Vehicle::class);
@@ -43,6 +57,8 @@ class IncidentReport extends Model
         return [
             'incident_date' => 'date',
             'photos' => 'array',
+            'performance_data' => 'array',
+            'performance_revision' => 'integer',
         ];
     }
 }

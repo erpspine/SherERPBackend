@@ -1,0 +1,973 @@
+{
+  "A": {
+    "title": "Case Identification",
+    "fields": [
+      {
+        "key": "caseReference",
+        "label": "Case Reference",
+        "type": "readonly"
+      },
+      {
+        "key": "bookingReference",
+        "label": "Booking Reference",
+        "type": "readonly"
+      },
+      {
+        "key": "client",
+        "label": "Client / Tour Operator",
+        "type": "readonly"
+      },
+      {
+        "key": "guestParty",
+        "label": "Guest / Party",
+        "type": "readonly"
+      },
+      {
+        "key": "safariPeriod",
+        "label": "Booking Period",
+        "type": "readonly"
+      },
+      {
+        "key": "vehicle",
+        "label": "Vehicle",
+        "type": "readonly"
+      },
+      {
+        "key": "driver",
+        "label": "Driver / Guide",
+        "type": "readonly"
+      },
+      {
+        "key": "type",
+        "label": "Incident Type",
+        "type": "select",
+        "options": ["Client Complaint", "Accident", "Breakdown", "Compliance", "Positive Feedback", "Review", "Routine"]
+      },
+      {
+        "key": "dateReported",
+        "label": "Date Reported",
+        "type": "date"
+      },
+      {
+        "key": "incidentDate",
+        "label": "Incident Date",
+        "type": "date"
+      },
+      {
+        "key": "reportedBy",
+        "label": "Reported By",
+        "type": "text"
+      },
+      {
+        "key": "assignedInvestigator",
+        "label": "Assigned Investigator",
+        "type": "text"
+      },
+      {
+        "key": "severity",
+        "label": "Overall Severity",
+        "type": "select",
+        "options": [
+          "Low",
+          "Medium",
+          "High",
+          "Critical"
+        ]
+      },
+      {
+        "key": "clientImpact",
+        "label": "Client Impact",
+        "type": "select",
+        "options": [
+          "None",
+          "Low",
+          "Moderate",
+          "High"
+        ]
+      },
+      {
+        "key": "safetyRisk",
+        "label": "Safety Risk Identified",
+        "type": "textarea"
+      },
+      {
+        "key": "clientRelationshipRisk",
+        "label": "Client Relationship Risk",
+        "type": "select",
+        "options": [
+          "Low",
+          "Medium",
+          "High"
+        ]
+      }
+    ]
+  },
+  "B": {
+    "title": "Incident / Feedback Classification",
+    "fields": [
+      {
+        "key": "classifications",
+        "label": "Primary Classification",
+        "type": "checklist",
+        "options": [
+          "Client Complaint",
+          "Vehicle Breakdown",
+          "Driver Performance",
+          "Driver Conduct",
+          "Safety / Speeding",
+          "Guest Service",
+          "Guiding Quality",
+          "Itinerary Disruption",
+          "Positive Feedback"
+        ]
+      },
+      {
+        "key": "operationalAreas",
+        "label": "Related Operational Areas",
+        "type": "checklist",
+        "options": [
+          "Vehicle / Mechanical",
+          "Driver",
+          "Safety",
+          "Client Communication",
+          "Guest Experience",
+          "Breakdown Response",
+          "Itinerary Planning",
+          "Pre-Safari Briefing / Role Allocation"
+        ]
+      }
+    ]
+  },
+  "C": {
+    "title": "Original Client Feedback / Concerns",
+    "fields": [
+      {
+        "key": "summary",
+        "label": "Original Feedback / Incident Summary",
+        "type": "textarea"
+      },
+      {
+        "key": "concerns",
+        "label": "Concerns Raised",
+        "type": "rows",
+        "columns": [
+          {
+            "key": "title",
+            "label": "Concern",
+            "type": "text"
+          },
+          {
+            "key": "description",
+            "label": "Details",
+            "type": "textarea"
+          }
+        ]
+      }
+    ]
+  },
+  "D": {
+    "title": "Immediate Management Actions",
+    "fields": [
+      {
+        "key": "actions",
+        "label": "Immediate Management Actions",
+        "type": "rows",
+        "columns": [
+          {
+            "key": "action",
+            "label": "Action",
+            "type": "textarea"
+          },
+          {
+            "key": "status",
+            "label": "Action Status",
+            "type": "select",
+            "options": [
+              "Open",
+              "Closed"
+            ]
+          },
+          {
+            "key": "finding",
+            "label": "Finding / Comment",
+            "type": "textarea"
+          }
+        ]
+      }
+    ]
+  },
+  "E": {
+    "title": "Evidence Register",
+    "fields": [
+      {
+        "key": "evidence",
+        "label": "Evidence Register",
+        "type": "rows",
+        "columns": [
+          {
+            "key": "ref",
+            "label": "Evidence Reference",
+            "type": "text"
+          },
+          {
+            "key": "evidence",
+            "label": "Evidence / Source",
+            "type": "text"
+          },
+          {
+            "key": "status",
+            "label": "Status",
+            "type": "select",
+            "options": [
+              "Pending",
+              "Received",
+              "Reviewed",
+              "Unavailable"
+            ]
+          },
+          {
+            "key": "information",
+            "label": "Key Information",
+            "type": "textarea"
+          }
+        ]
+      }
+    ]
+  },
+  "F": {
+    "title": "Breakdown Incident Timeline",
+    "fields": [
+      {
+        "key": "programme",
+        "label": "Planned Programme for the Day",
+        "type": "list"
+      },
+      {
+        "key": "timeline",
+        "label": "Incident Timeline",
+        "type": "rows",
+        "columns": [
+          {
+            "key": "date",
+            "label": "Date",
+            "type": "date"
+          },
+          {
+            "key": "time",
+            "label": "Approximate Time",
+            "type": "time"
+          },
+          {
+            "key": "event",
+            "label": "Event",
+            "type": "textarea"
+          },
+          {
+            "key": "evidence",
+            "label": "Evidence / Status",
+            "type": "textarea"
+          }
+        ]
+      },
+      {
+        "key": "downtime",
+        "label": "Approximate Vehicle Downtime",
+        "type": "text"
+      }
+    ]
+  },
+  "G": {
+    "title": "Detailed Investigation Findings",
+    "fields": [
+      {
+        "key": "findings",
+        "label": "Investigation Findings",
+        "type": "rows",
+        "columns": [
+          {
+            "key": "concern",
+            "label": "Concern / Subject",
+            "type": "text"
+          },
+          {
+            "key": "account",
+            "label": "Client / Guest Account",
+            "type": "textarea"
+          },
+          {
+            "key": "driverAccount",
+            "label": "Driver / Guide Account",
+            "type": "textarea"
+          },
+          {
+            "key": "evidence",
+            "label": "Objective Evidence",
+            "type": "textarea"
+          },
+          {
+            "key": "outcome",
+            "label": "Investigation Outcome",
+            "type": "select",
+            "options": [
+              "Substantiated",
+              "Partially substantiated",
+              "Not substantiated",
+              "Inconclusive",
+              "Not applicable"
+            ]
+          },
+          {
+            "key": "finding",
+            "label": "Internal Finding",
+            "type": "textarea"
+          },
+          {
+            "key": "impact",
+            "label": "Actual Service Impact",
+            "type": "textarea"
+          },
+          {
+            "key": "action",
+            "label": "Management Action",
+            "type": "textarea"
+          }
+        ]
+      }
+    ]
+  },
+  "H": {
+    "title": "Vehicle / Mechanical Investigation",
+    "fields": [
+      {
+        "key": "field0",
+        "label": "Mechanical failure confirmed?",
+        "type": "select",
+        "options": [
+          "Yes",
+          "No",
+          "Not established",
+          "Not applicable"
+        ]
+      },
+      {
+        "key": "field1",
+        "label": "Component affected",
+        "type": "textarea"
+      },
+      {
+        "key": "field2",
+        "label": "Approximate failure time",
+        "type": "textarea"
+      },
+      {
+        "key": "field3",
+        "label": "Approximate location",
+        "type": "textarea"
+      },
+      {
+        "key": "field4",
+        "label": "Cause indicated",
+        "type": "textarea"
+      },
+      {
+        "key": "field5",
+        "label": "Mechanic mobilised?",
+        "type": "select",
+        "options": [
+          "Yes",
+          "No",
+          "Not established",
+          "Not applicable"
+        ]
+      },
+      {
+        "key": "field6",
+        "label": "Mechanic\u2019s arrival",
+        "type": "textarea"
+      },
+      {
+        "key": "field7",
+        "label": "Repair completed",
+        "type": "textarea"
+      },
+      {
+        "key": "field8",
+        "label": "Repair undertaken",
+        "type": "textarea"
+      },
+      {
+        "key": "field9",
+        "label": "Vehicle returned to operation?",
+        "type": "select",
+        "options": [
+          "Yes",
+          "No",
+          "Not established",
+          "Not applicable"
+        ]
+      },
+      {
+        "key": "field10",
+        "label": "Critical spare parts available in the vehicle?",
+        "type": "select",
+        "options": [
+          "Yes",
+          "No",
+          "Not established",
+          "Not applicable"
+        ]
+      },
+      {
+        "key": "field11",
+        "label": "Could the response time potentially have been reduced if a spare was available?",
+        "type": "select",
+        "options": [
+          "Yes",
+          "No",
+          "Not established",
+          "Not applicable"
+        ]
+      },
+      {
+        "key": "field12",
+        "label": "Is the formal breakdown-response SOP currently adequate?",
+        "type": "select",
+        "options": [
+          "Yes",
+          "No",
+          "Not established",
+          "Not applicable"
+        ]
+      },
+      {
+        "key": "field13",
+        "label": "Mechanical Root Cause",
+        "type": "textarea"
+      },
+      {
+        "key": "field14",
+        "label": "Improvement Opportunity",
+        "type": "textarea"
+      }
+    ]
+  },
+  "I": {
+    "title": "Driver Performance and Safety Review",
+    "fields": [
+      {
+        "key": "reviews",
+        "label": "Driver Performance and Safety Review",
+        "type": "rows",
+        "columns": [
+          {
+            "key": "area",
+            "label": "Area",
+            "type": "text"
+          },
+          {
+            "key": "finding",
+            "label": "Finding / Comment",
+            "type": "textarea"
+          },
+          {
+            "key": "status",
+            "label": "Status",
+            "type": "select",
+            "options": [
+              "Pending",
+              "Concern identified",
+              "Satisfactory",
+              "Inconclusive",
+              "Not applicable"
+            ]
+          }
+        ],
+        "default": [
+          {
+            "area": "Speed",
+            "finding": "",
+            "status": "Pending"
+          },
+          {
+            "area": "Harsh driving",
+            "finding": "",
+            "status": "Pending"
+          },
+          {
+            "area": "Fatigue",
+            "finding": "",
+            "status": "Pending"
+          },
+          {
+            "area": "Guest interaction",
+            "finding": "",
+            "status": "Pending"
+          },
+          {
+            "area": "Wildlife guiding",
+            "finding": "",
+            "status": "Pending"
+          },
+          {
+            "area": "Communication",
+            "finding": "",
+            "status": "Pending"
+          },
+          {
+            "area": "Professional conduct",
+            "finding": "",
+            "status": "Pending"
+          },
+          {
+            "area": "Park conduct",
+            "finding": "",
+            "status": "Pending"
+          },
+          {
+            "area": "Breakdown reporting",
+            "finding": "",
+            "status": "Pending"
+          },
+          {
+            "area": "Safety compliance",
+            "finding": "",
+            "status": "Pending"
+          }
+        ]
+      },
+      {
+        "key": "assessment",
+        "label": "Overall Driver Assessment",
+        "type": "textarea"
+      }
+    ]
+  },
+  "J": {
+    "title": "Operational Response Review",
+    "fields": [
+      {
+        "key": "field0",
+        "label": "Was SHER notified promptly?",
+        "type": "select",
+        "options": [
+          "Yes",
+          "No",
+          "Not established",
+          "Not applicable"
+        ]
+      },
+      {
+        "key": "field1",
+        "label": "Was mechanical support mobilised?",
+        "type": "select",
+        "options": [
+          "Yes",
+          "No",
+          "Not established",
+          "Not applicable"
+        ]
+      },
+      {
+        "key": "field2",
+        "label": "Were guests removed from the breakdown location?",
+        "type": "select",
+        "options": [
+          "Yes",
+          "No",
+          "Not established",
+          "Not applicable"
+        ]
+      },
+      {
+        "key": "field3",
+        "label": "Was a replacement vehicle dispatched?",
+        "type": "select",
+        "options": [
+          "Yes",
+          "No",
+          "Not established",
+          "Not applicable"
+        ]
+      },
+      {
+        "key": "field4",
+        "label": "Was the vehicle repaired on the same day?",
+        "type": "select",
+        "options": [
+          "Yes",
+          "No",
+          "Not established",
+          "Not applicable"
+        ]
+      },
+      {
+        "key": "field5",
+        "label": "Was the afternoon programme affected?",
+        "type": "select",
+        "options": [
+          "Yes",
+          "No",
+          "Not established",
+          "Not applicable"
+        ]
+      },
+      {
+        "key": "field6",
+        "label": "Was the breakdown response formally guided by an SOP?",
+        "type": "select",
+        "options": [
+          "Yes",
+          "No",
+          "Not established",
+          "Not applicable"
+        ]
+      },
+      {
+        "key": "field7",
+        "label": "Was the impact on the guests\u2019 itinerary adequately considered in the replacement-vehicle decision?",
+        "type": "select",
+        "options": [
+          "Yes",
+          "No",
+          "Not established",
+          "Not applicable"
+        ]
+      },
+      {
+        "key": "field8",
+        "label": "Were critical field spares available?",
+        "type": "select",
+        "options": [
+          "Yes",
+          "No",
+          "Not established",
+          "Not applicable"
+        ]
+      },
+      {
+        "key": "field9",
+        "label": "Was client communication sufficient?",
+        "type": "select",
+        "options": [
+          "Yes",
+          "No",
+          "Not established",
+          "Not applicable"
+        ]
+      },
+      {
+        "key": "field10",
+        "label": "Operational Gaps Identified",
+        "type": "list"
+      }
+    ]
+  },
+  "K": {
+    "title": "Root Cause Analysis",
+    "fields": [
+      {
+        "key": "causes",
+        "label": "Root Cause Analysis",
+        "type": "rows",
+        "columns": [
+          {
+            "key": "area",
+            "label": "Area",
+            "type": "text"
+          },
+          {
+            "key": "cause",
+            "label": "Cause / Contributing Factor",
+            "type": "textarea"
+          },
+          {
+            "key": "finding",
+            "label": "Finding",
+            "type": "textarea"
+          }
+        ]
+      }
+    ]
+  },
+  "L": {
+    "title": "Responsibility Assessment",
+    "fields": [
+      {
+        "key": "responsibilities",
+        "label": "Responsibility Assessment",
+        "type": "rows",
+        "columns": [
+          {
+            "key": "party",
+            "label": "Party / Area",
+            "type": "text"
+          },
+          {
+            "key": "assessment",
+            "label": "Responsibility Assessment",
+            "type": "textarea"
+          },
+          {
+            "key": "details",
+            "label": "Details",
+            "type": "textarea"
+          }
+        ],
+        "default": [
+          {
+            "party": "Driver / Guide",
+            "assessment": "",
+            "details": ""
+          },
+          {
+            "party": "Fleet / Operations",
+            "assessment": "",
+            "details": ""
+          },
+          {
+            "party": "Workshop / Maintenance",
+            "assessment": "",
+            "details": ""
+          },
+          {
+            "party": "Management",
+            "assessment": "",
+            "details": ""
+          },
+          {
+            "party": "Client / Itinerary",
+            "assessment": "",
+            "details": ""
+          },
+          {
+            "party": "Client Guide / Briefing",
+            "assessment": "",
+            "details": ""
+          },
+          {
+            "party": "Terrain / External Conditions",
+            "assessment": "",
+            "details": ""
+          }
+        ]
+      }
+    ]
+  },
+  "M": {
+    "title": "Disciplinary / Personnel Action",
+    "fields": [
+      {
+        "key": "required",
+        "label": "Disciplinary action required?",
+        "type": "select",
+        "options": [
+          "Yes",
+          "No",
+          "Under review"
+        ]
+      },
+      {
+        "key": "taken",
+        "label": "Disciplinary action taken?",
+        "type": "select",
+        "options": [
+          "Yes",
+          "No",
+          "Pending"
+        ]
+      },
+      {
+        "key": "actionDate",
+        "label": "Action Date",
+        "type": "date"
+      },
+      {
+        "key": "reasons",
+        "label": "Reasons",
+        "type": "list"
+      },
+      {
+        "key": "action",
+        "label": "Specific HR Action",
+        "type": "textarea"
+      },
+      {
+        "key": "requirements",
+        "label": "Further Requirements",
+        "type": "list"
+      },
+      {
+        "key": "reviewDate",
+        "label": "Follow-up Review Date",
+        "type": "date"
+      }
+    ]
+  },
+  "N": {
+    "title": "Client / Commercial Impact",
+    "fields": [
+      {
+        "key": "impact",
+        "label": "Client / Commercial Impact",
+        "type": "checklist",
+        "options": [
+          "Guest experience affected?",
+          "Morning game drive lost?",
+          "Afternoon game drive disrupted?",
+          "Full safari day lost?",
+          "Formal client complaint received?",
+          "Client relationship risk",
+          "Safety concern raised?",
+          "Refund / compensation requested?",
+          "Financial exposure",
+          "Senior commercial management required?"
+        ]
+      },
+      {
+        "key": "assessment",
+        "label": "Commercial Assessment",
+        "type": "textarea"
+      },
+      {
+        "key": "requirements",
+        "label": "Client-Facing Response Requirements",
+        "type": "list"
+      }
+    ]
+  },
+  "O": {
+    "title": "Corrective and Preventive Action Register",
+    "fields": [
+      {
+        "key": "actions",
+        "label": "Corrective and Preventive Actions",
+        "type": "rows",
+        "columns": [
+          {
+            "key": "action",
+            "label": "Action",
+            "type": "textarea"
+          },
+          {
+            "key": "status",
+            "label": "Action Status",
+            "type": "select",
+            "options": [
+              "Open",
+              "Closed"
+            ]
+          },
+          {
+            "key": "finding",
+            "label": "Finding / Comment",
+            "type": "textarea"
+          }
+        ]
+      }
+    ]
+  },
+  "P": {
+    "title": "Final Management Finding",
+    "fields": [
+      {
+        "key": "outcome",
+        "label": "Overall Investigation Outcome",
+        "type": "select",
+        "options": [
+          "Substantiated",
+          "Partially substantiated",
+          "Not substantiated",
+          "Inconclusive",
+          "Positive feedback",
+          "Not applicable"
+        ]
+      },
+      {
+        "key": "summary",
+        "label": "Final Management Summary",
+        "type": "textarea"
+      }
+    ]
+  },
+  "Q": {
+    "title": "Lessons Learned",
+    "fields": [
+      {
+        "key": "lessons",
+        "label": "Lessons Learned",
+        "type": "list"
+      }
+    ]
+  },
+  "R": {
+    "title": "Management Approval and Case Closure",
+    "fields": [
+      {
+        "key": "approvals",
+        "label": "Management Approval",
+        "type": "rows",
+        "columns": [
+          {
+            "key": "role",
+            "label": "Role",
+            "type": "text"
+          },
+          {
+            "key": "name",
+            "label": "Approver Name",
+            "type": "text"
+          },
+          {
+            "key": "approved",
+            "label": "Approved",
+            "type": "checkbox"
+          }
+        ],
+        "default": [
+          {
+            "role": "Investigator",
+            "name": "",
+            "approved": false
+          },
+          {
+            "role": "Fleet Manager",
+            "name": "",
+            "approved": false
+          },
+          {
+            "role": "Commercial Management",
+            "name": "",
+            "approved": false
+          },
+          {
+            "role": "Senior Management",
+            "name": "",
+            "approved": false
+          }
+        ]
+      },
+      {
+        "key": "status",
+        "label": "Case Status",
+        "type": "status",
+        "options": [
+          "Open",
+          "Corrective actions in progress",
+          "Monitoring",
+          "Closed"
+        ],
+        "default": "Open"
+      },
+      {
+        "key": "closureDate",
+        "label": "Final Closure Date",
+        "type": "date"
+      },
+      {
+        "key": "closureNote",
+        "label": "Closure Note",
+        "type": "textarea"
+      }
+    ]
+  }
+}

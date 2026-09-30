@@ -340,7 +340,7 @@ class ProformaInvoiceController extends Controller
 
         $proformaInvoice->load(['quotation', 'lead', 'lineItems']);
 
-        if (!in_array($proformaInvoice->status ?? '', ['Confirmed', 'Partially Allocated'], true)) {
+        if (!in_array($proformaInvoice->status ?? '', ['Confirmed', 'Partially Allocated', 'Deposit', 'Paid'], true)) {
             throw ValidationException::withMessages([
                 'status' => ['Proforma invoice must be confirmed before vehicles can be allocated.'],
             ]);
@@ -411,7 +411,12 @@ class ProformaInvoiceController extends Controller
 
         $requestedVehicles = max(0, (int) ($proformaInvoice->lead?->no_of_vehicles ?? 0));
         $allocatedVehicles = SafariAllocation::query()
-            ->where('proforma_invoice_id', $proformaInvoice->id)
+            ->where('lead_id', $proformaInvoice->lead_id)
+            ->whereNotNull('vehicle_id')
+            ->where(function ($query) use ($proformaInvoice): void {
+                $query->whereNull('proforma_invoice_id')
+                    ->orWhere('proforma_invoice_id', $proformaInvoice->id);
+            })
             ->distinct('vehicle_id')
             ->count('vehicle_id');
 
@@ -430,7 +435,7 @@ class ProformaInvoiceController extends Controller
             $nextStatus = 'Confirmed';
         }
 
-        if ($nextStatus !== $proformaInvoice->status) {
+        if (!in_array($proformaInvoice->status, ['Deposit', 'Paid'], true) && $nextStatus !== $proformaInvoice->status) {
             $proformaInvoice->status = $nextStatus;
             $proformaInvoice->save();
         }

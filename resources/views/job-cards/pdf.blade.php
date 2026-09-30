@@ -370,6 +370,24 @@
                     </tr>
                 </table>
 
+                <div class="section-title">Driver/Guide Details</div>
+                @foreach ($currentCar !== null ? [$currentCar['driverProfile'] ?? []] : ($jobCard['driverProfiles'] ?? []) as $profile)
+                    <table class="grid" style="margin-bottom:8px;page-break-inside:avoid;">
+                        <tr>
+                            <td><span class="label">Name:</span> {{ $profile['name'] ?: '-' }}</td>
+                            <td><span class="label">Phone:</span> {{ $profile['phone'] ?: '-' }}</td>
+                        </tr>
+                        <tr>
+                            <td><span class="label">Plate No:</span> {{ $profile['plateNo'] ?: '-' }}</td>
+                            <td><span class="label">Languages:</span> {{ $profile['languages'] ?: '-' }}</td>
+                        </tr>
+                        <tr>
+                            <td><span class="label">Driver Licence:</span> {{ $profile['driverLicense'] ?: '-' }}</td>
+                            <td><span class="label">Tour Guide Licence:</span> {{ $profile['guideLicense'] ?: '-' }}</td>
+                        </tr>
+                    </table>
+                @endforeach
+
                 @if ($isSafari || $isLease)
                     @php
                         $itineraryDays = $jobCard['routeItinerary'] ?? [];

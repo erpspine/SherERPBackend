@@ -5,10 +5,15 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\LeaseAllocation;
 use App\Models\LeaseContract;
+use App\Models\Setting;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class LeaseAllocationController extends Controller
@@ -60,10 +65,15 @@ class LeaseAllocationController extends Controller
 
     public function exportExcel(Request $request): StreamedResponse
     {
+        $dateFrom = trim((string) $request->input('dateFrom', ''));
+        $dateTo = trim((string) $request->input('dateTo', ''));
+        $clipOverlapDates = $request->boolean('clipOverlapDates');
+
         $rows = $this->filteredQuery($request)
             ->orderByDesc('id')
             ->get()
             ->map(fn(LeaseAllocation $allocation): array => $this->transform($allocation))
+            ->map(fn(array $row): array => $this->buildExportRow($row, $dateFrom, $dateTo, $clipOverlapDates))
             ->values();
 
         $filename = 'lease-allocations-report.csv';
@@ -79,47 +89,25 @@ class LeaseAllocationController extends Controller
 
             fputcsv($output, [
                 'Client',
-                'Lease Type',
                 'Group Name',
                 'Vehicle No',
-                'Plate No',
                 'Driver',
                 'Start Date',
                 'End Date',
-                'Status',
+                'Utilized Days',
                 'Itinerary',
-                'Fuel Notes',
-                'Notes',
             ]);
 
             foreach ($rows as $row) {
-                $itineraryItems = collect($row['itineraryItems'] ?? [])
-                    ->map(function ($item): string {
-                        if (! is_array($item)) {
-                            return '';
-                        }
-
-                        $date = trim((string) ($item['date'] ?? ''));
-                        $details = trim((string) ($item['details'] ?? ''));
-
-                        return trim(($date !== '' ? ($date . ': ') : '') . $details);
-                    })
-                    ->filter(fn(string $line): bool => $line !== '')
-                    ->implode(' | ');
-
                 fputcsv($output, [
                     (string) ($row['contract']['clientName'] ?? '-'),
-                    (string) ($row['contract']['leaseType'] ?? '-'),
                     (string) ($row['groupName'] ?? ''),
                     (string) ($row['vehicle']['vehicleNo'] ?? '-'),
-                    (string) ($row['vehicle']['plateNo'] ?? '-'),
                     (string) ($row['driver']['name'] ?? ''),
-                    (string) ($row['startDate'] ?? ''),
-                    (string) ($row['endDate'] ?? ''),
-                    (string) ($row['status'] ?? ''),
-                    (string) ($row['itinerary'] ?? ($itineraryItems !== '' ? $itineraryItems : '')),
-                    (string) ($row['fuelNotes'] ?? ''),
-                    (string) ($row['notes'] ?? ''),
+                    $this->formatExportDate((string) ($row['exportStartDate'] ?? $row['startDate'] ?? '')),
+                    $this->formatExportDate((string) ($row['exportEndDate'] ?? $row['endDate'] ?? '')),
+                    (string) ($row['utilizedDays'] ?? 0),
+                    $this->formatItineraryForExport($row),
                 ]);
             }
 
@@ -127,6 +115,234 @@ class LeaseAllocationController extends Controller
         }, $filename, [
             'Content-Type' => 'text/csv; charset=UTF-8',
         ]);
+    }
+
+    public function exportPdf(Request $request): Response
+    {
+        $dateFrom = trim((string) $request->input('dateFrom', ''));
+        $dateTo = trim((string) $request->input('dateTo', ''));
+        $clipOverlapDates = $request->boolean('clipOverlapDates');
+
+        $rows = $this->filteredQuery($request)
+            ->orderByDesc('id')
+            ->get()
+            ->map(fn(LeaseAllocation $allocation): array => $this->transform($allocation))
+            ->map(fn(array $row): array => $this->buildExportRow($row, $dateFrom, $dateTo, $clipOverlapDates))
+            ->values();
+
+        $company = [
+            'name' => Setting::get('company_name', config('app.name')),
+            'email' => Setting::get('company_email'),
+            'phone' => Setting::get('company_phone'),
+            'address' => Setting::get('company_address'),
+        ];
+
+        $filters = [
+            'dateFrom' => $dateFrom,
+            'dateTo' => $dateTo,
+            'status' => $request->input('status'),
+            'search' => $request->input('search'),
+        ];
+
+        $pdf = Pdf::loadView('lease-allocations.pdf', [
+            'rows' => $rows,
+            'company' => $company,
+            'logoDataUri' => $this->resolveLogoDataUri(),
+            'filters' => $filters,
+            'generatedAt' => now()->format('d M Y H:i'),
+            'stats' => [
+                'total' => $rows->count(),
+                'scheduled' => $rows->where('status', 'Scheduled')->count(),
+                'inProgress' => $rows->where('status', 'In Progress')->count(),
+                'completed' => $rows->where('status', 'Completed')->count(),
+            ],
+            'dateFrom' => $dateFrom,
+            'dateTo' => $dateTo,
+        ])->setPaper('a4', 'landscape');
+
+        $dompdf = $pdf->getDomPDF();
+        $dompdf->render();
+
+        $canvas = $dompdf->getCanvas();
+        $fontMetrics = $dompdf->getFontMetrics();
+        $font = $fontMetrics->getFont('DejaVu Sans', 'normal');
+        $pageText = 'Page {PAGE_NUM} of {PAGE_COUNT}';
+        $fontSize = 8;
+        $x = $canvas->get_width() - $fontMetrics->getTextWidth($pageText, $font, $fontSize) - 28;
+        $y = $canvas->get_height() - 22;
+        $canvas->page_text($x, $y, $pageText, $font, $fontSize, [0.42, 0.45, 0.50]);
+
+        $filename = 'lease-allocations-report-' . now()->format('Ymd-His') . '.pdf';
+
+        return response($dompdf->output(), 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+        ]);
+    }
+
+    private function resolveLogoDataUri(): ?string
+    {
+        $logoPath = Setting::get('logo');
+
+        if (! is_string($logoPath) || $logoPath === '' || ! Storage::disk('public')->exists($logoPath)) {
+            return null;
+        }
+
+        $contents = Storage::disk('public')->get($logoPath);
+        $extension = strtolower(pathinfo($logoPath, PATHINFO_EXTENSION));
+        $mime = match ($extension) {
+            'jpg', 'jpeg' => 'image/jpeg',
+            'gif' => 'image/gif',
+            'webp' => 'image/webp',
+            default => 'image/png',
+        };
+
+        return 'data:' . $mime . ';base64,' . base64_encode($contents);
+    }
+
+    private function formatExportDate(string $value): string
+    {
+        if (trim($value) === '') {
+            return '';
+        }
+
+        try {
+            return Carbon::parse($value)->format('d F Y');
+        } catch (\Throwable) {
+            return $value;
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    private function buildExportRow(array $row, string $dateFrom = '', string $dateTo = '', bool $clipOverlapDates = false): array
+    {
+        ['startDate' => $exportStartDate, 'endDate' => $exportEndDate] = $this->resolveExportDateRange(
+            (string) ($row['startDate'] ?? ''),
+            (string) ($row['endDate'] ?? ''),
+            $dateFrom,
+            $dateTo,
+            $clipOverlapDates,
+        );
+
+        $row['exportStartDate'] = $exportStartDate;
+        $row['exportEndDate'] = $exportEndDate;
+        $row['utilizedDays'] = $this->countUtilizedDays(
+            (string) ($row['startDate'] ?? ''),
+            (string) ($row['endDate'] ?? ''),
+            $dateFrom,
+            $dateTo,
+        );
+        $row['exportItinerary'] = $this->formatItineraryForExport($row);
+
+        return $row;
+    }
+
+    /**
+     * @return array{startDate: string, endDate: string}
+     */
+    private function resolveExportDateRange(
+        string $startDate,
+        string $endDate,
+        string $dateFrom = '',
+        string $dateTo = '',
+        bool $clipOverlapDates = false,
+    ): array {
+        $resolvedEndDate = trim($endDate) !== '' ? $endDate : $startDate;
+
+        if (! $clipOverlapDates) {
+            return [
+                'startDate' => $startDate,
+                'endDate' => $resolvedEndDate,
+            ];
+        }
+
+        try {
+            $allocationStart = Carbon::parse($startDate)->startOfDay();
+            $allocationEnd = Carbon::parse($resolvedEndDate)->startOfDay();
+            $displayStart = $allocationStart->copy();
+            $displayEnd = $allocationEnd->copy();
+
+            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateFrom)) {
+                $windowStart = Carbon::parse($dateFrom)->startOfDay();
+                if ($allocationStart->lt($windowStart) && $allocationEnd->gte($windowStart)) {
+                    $displayStart = $windowStart;
+                }
+            }
+
+            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateTo)) {
+                $windowEnd = Carbon::parse($dateTo)->startOfDay();
+                if ($allocationEnd->gt($windowEnd) && $allocationStart->lte($windowEnd)) {
+                    $displayEnd = $windowEnd;
+                }
+            }
+
+            if ($displayEnd->lt($displayStart)) {
+                $displayEnd = $displayStart->copy();
+            }
+
+            return [
+                'startDate' => $displayStart->toDateString(),
+                'endDate' => $displayEnd->toDateString(),
+            ];
+        } catch (\Throwable) {
+            return [
+                'startDate' => $startDate,
+                'endDate' => $resolvedEndDate,
+            ];
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     */
+    private function formatItineraryForExport(array $row): string
+    {
+        $itineraryItems = collect($row['itineraryItems'] ?? [])
+            ->map(function ($item): string {
+                if (! is_array($item)) {
+                    return '';
+                }
+
+                $date = trim((string) ($item['date'] ?? ''));
+                $details = trim((string) ($item['details'] ?? ''));
+
+                return trim(($date !== '' ? ($this->formatExportDate($date) . ': ') : '') . $details);
+            })
+            ->filter(fn(string $line): bool => $line !== '')
+            ->implode(' | ');
+
+        return (string) ($itineraryItems !== '' ? $itineraryItems : ($row['itinerary'] ?? ''));
+    }
+
+    private function countUtilizedDays(string $startDate, string $endDate, string $dateFrom = '', string $dateTo = ''): int
+    {
+        if (trim($startDate) === '') {
+            return 0;
+        }
+
+        try {
+            $allocationStart = Carbon::parse($startDate)->startOfDay();
+            $allocationEnd = trim($endDate) !== ''
+                ? Carbon::parse($endDate)->startOfDay()
+                : $allocationStart->copy();
+
+            $windowStart = preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateFrom)
+                ? Carbon::parse($dateFrom)->startOfDay()
+                : $allocationStart->copy();
+            $windowEnd = preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateTo)
+                ? Carbon::parse($dateTo)->startOfDay()
+                : $allocationEnd->copy();
+
+            $start = $allocationStart->greaterThan($windowStart) ? $allocationStart : $windowStart;
+            $end = $allocationEnd->lessThan($windowEnd) ? $allocationEnd : $windowEnd;
+
+            return $end->lessThan($start) ? 0 : ((int) $start->diffInDays($end)) + 1;
+        } catch (\Throwable) {
+            return 0;
+        }
     }
 
     public function show(LeaseAllocation $leaseAllocation): JsonResponse

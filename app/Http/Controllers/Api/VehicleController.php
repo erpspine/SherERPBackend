@@ -27,13 +27,19 @@ class VehicleController extends Controller
         ]);
     }
 
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
-        $vehicles = Vehicle::query()
+        $vehiclesQuery = Vehicle::query()
             ->with('assignedDriver:id,name,email')
             ->orderBy('vehicle_no')
-            ->orderBy('id')
-            ->get();
+            ->orderBy('id');
+
+        $ownershipType = $this->normalizeOwnershipType($request->query('ownershipType'));
+        if ($ownershipType !== null) {
+            $vehiclesQuery->where('ownership_type', $ownershipType);
+        }
+
+        $vehicles = $vehiclesQuery->get();
 
         return response()->json([
             'message' => 'Vehicles fetched successfully.',
@@ -80,13 +86,14 @@ class VehicleController extends Controller
             'vehiclePhoto' => ['nullable', 'file', 'image', 'max:5120'],
             'image' => ['nullable', 'file', 'image', 'max:5120'],
             'status' => ['sometimes', Rule::in(['Available', 'On Lease', 'Maintenance', 'Retired'])],
-            'assignedDriverId' => ['nullable', 'integer', Rule::exists('users', 'id')->where(fn ($query) => $query->where('status', 'Active'))],
+            'assignedDriverId' => ['nullable', 'integer', Rule::exists('users', 'id')->where(fn($query) => $query->where('status', 'Active'))],
             'leaseType' => ['sometimes', Rule::in(['Daily Lease', 'Short-Term Lease', 'Long-Term Lease'])],
             'leaseStartDate' => ['nullable', 'date'],
             'leaseEndDate' => ['nullable', 'date', 'after_or_equal:leaseStartDate'],
             'leaseClientName' => ['nullable', 'string', 'max:150'],
             'leaseMonthlyRate' => ['nullable', 'numeric', 'min:0'],
             'leaseNotes' => ['nullable', 'string'],
+            'ownershipType' => ['sometimes', Rule::in(['Internal', 'Subcontracted'])],
         ]);
 
         $uploadedPhoto = $this->resolvePhotoUpload($request);
@@ -138,13 +145,14 @@ class VehicleController extends Controller
             'vehiclePhoto' => ['nullable', 'file', 'image', 'max:5120'],
             'image' => ['nullable', 'file', 'image', 'max:5120'],
             'status' => ['sometimes', Rule::in(['Available', 'On Lease', 'Maintenance', 'Retired'])],
-            'assignedDriverId' => ['nullable', 'integer', Rule::exists('users', 'id')->where(fn ($query) => $query->where('status', 'Active'))],
+            'assignedDriverId' => ['nullable', 'integer', Rule::exists('users', 'id')->where(fn($query) => $query->where('status', 'Active'))],
             'leaseType' => ['sometimes', Rule::in(['Daily Lease', 'Short-Term Lease', 'Long-Term Lease'])],
             'leaseStartDate' => ['nullable', 'date'],
             'leaseEndDate' => ['nullable', 'date', 'after_or_equal:leaseStartDate'],
             'leaseClientName' => ['nullable', 'string', 'max:150'],
             'leaseMonthlyRate' => ['nullable', 'numeric', 'min:0'],
             'leaseNotes' => ['nullable', 'string'],
+            'ownershipType' => ['sometimes', Rule::in(['Internal', 'Subcontracted'])],
         ]);
 
         $uploadedPhoto = $this->resolvePhotoUpload($request);
@@ -189,6 +197,7 @@ class VehicleController extends Controller
     {
         $map = [
             'vehicleNo' => 'vehicle_no',
+            'ownershipType' => 'ownership_type',
             'plateNo' => 'plate_no',
             'make' => 'make',
             'model' => 'model',
@@ -300,6 +309,8 @@ class VehicleController extends Controller
     {
         return [
             'id' => $vehicle->id,
+            'ownership_type' => $vehicle->ownership_type ?: 'Internal',
+            'ownershipType' => $vehicle->ownership_type ?: 'Internal',
             'vehicle_no' => $vehicle->vehicle_no,
             'car_no' => $vehicle->vehicle_no,
             'plate_no' => $vehicle->plate_no,
@@ -348,6 +359,21 @@ class VehicleController extends Controller
             'createdAt' => $vehicle->created_at?->toISOString(),
             'updatedAt' => $vehicle->updated_at?->toISOString(),
         ];
+    }
+
+    private function normalizeOwnershipType(mixed $value): ?string
+    {
+        if (! is_string($value)) {
+            return null;
+        }
+
+        $normalized = strtolower(trim($value));
+
+        return match ($normalized) {
+            'internal' => 'Internal',
+            'subcontracted' => 'Subcontracted',
+            default => null,
+        };
     }
 
     private function formatDateOnly(mixed $value): ?string

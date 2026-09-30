@@ -7,6 +7,8 @@ use App\Http\Controllers\Controller;
 use App\Mail\UserCreatedMail;
 use App\Mail\UserPasswordResetMail;
 use App\Models\User;
+use App\Models\Setting;
+use Illuminate\Support\Facades\Storage;
 use App\Services\SmsService;
 use Carbon\Carbon;
 use Illuminate\Auth\Passwords\PasswordBroker;
@@ -30,13 +32,17 @@ class UserController extends Controller
     public function index(): JsonResponse
     {
         $users = User::query()
-            ->with('roles:id,name')
+            ->with(['roles:id,name', 'assignedVehicles:id,assigned_driver_id,vehicle_no,plate_no'])
             ->latest('id')
             ->get([
                 'id',
                 'name',
                 'email',
                 'phone',
+                'tin',
+                'nida',
+                'bank_name',
+                'bank_account_number',
                 'languages_spoken',
                 'work_experience',
                 'driving_started_at',
@@ -304,6 +310,10 @@ class UserController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255', 'unique:users,email'],
             'phone' => ['required', 'string', 'max:30'],
+            'tin' => ['nullable', 'string', 'max:50'],
+            'nida' => ['nullable', 'string', 'max:50'],
+            'bank_name' => ['nullable', 'string', 'max:255'],
+            'bank_account_number' => ['nullable', 'string', 'max:100'],
             'languages_spoken' => ['nullable', function (string $attribute, mixed $value, \Closure $fail): void {
                 if (is_string($value) || is_array($value) || $value === null) {
                     return;
@@ -338,6 +348,10 @@ class UserController extends Controller
                 'name' => $validated['name'],
                 'email' => $validated['email'],
                 'phone' => $validated['phone'],
+                'tin' => $validated['tin'] ?? null,
+                'nida' => $validated['nida'] ?? null,
+                'bank_name' => $validated['bank_name'] ?? null,
+                'bank_account_number' => $validated['bank_account_number'] ?? null,
                 'languages_spoken' => $driverProfile['languages_spoken'],
                 'work_experience' => $driverProfile['work_experience'],
                 'driving_started_at' => $driverProfile['driving_started_at'],
@@ -390,6 +404,10 @@ class UserController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')->ignore($user->id)],
             'phone' => ['required', 'string', 'max:30'],
+            'tin' => ['nullable', 'string', 'max:50'],
+            'nida' => ['nullable', 'string', 'max:50'],
+            'bank_name' => ['nullable', 'string', 'max:255'],
+            'bank_account_number' => ['nullable', 'string', 'max:100'],
             'languages_spoken' => ['nullable', function (string $attribute, mixed $value, \Closure $fail): void {
                 if (is_string($value) || is_array($value) || $value === null) {
                     return;
@@ -417,6 +435,10 @@ class UserController extends Controller
             'name' => $validated['name'],
             'email' => $validated['email'],
             'phone' => $validated['phone'],
+            'tin' => array_key_exists('tin', $validated) ? $validated['tin'] : $user->tin,
+            'nida' => array_key_exists('nida', $validated) ? $validated['nida'] : $user->nida,
+            'bank_name' => array_key_exists('bank_name', $validated) ? $validated['bank_name'] : $user->bank_name,
+            'bank_account_number' => array_key_exists('bank_account_number', $validated) ? $validated['bank_account_number'] : $user->bank_account_number,
             'languages_spoken' => $driverProfile['languages_spoken'],
             'work_experience' => $driverProfile['work_experience'],
             'driving_started_at' => $driverProfile['driving_started_at'],
@@ -498,7 +520,8 @@ class UserController extends Controller
 
         $pdf = Pdf::loadView('users.driver-profile-pdf', [
             'driver' => $this->driverProfilePayload($user),
-            'company' => config('app.name', 'SHER ERP'),
+            'company' => Setting::get('company_name', config('app.name', 'SHER ERP')),
+            'logoDataUri' => $this->resolveDriverProfileLogoDataUri(),
         ]);
 
         return $pdf->download($this->driverProfileFilename($user));
@@ -515,7 +538,8 @@ class UserController extends Controller
         $profile = $this->driverProfilePayload($user);
         $pdf = Pdf::loadView('users.driver-profile-pdf', [
             'driver' => $profile,
-            'company' => config('app.name', 'SHER ERP'),
+            'company' => Setting::get('company_name', config('app.name', 'SHER ERP')),
+            'logoDataUri' => $this->resolveDriverProfileLogoDataUri(),
         ]);
 
         Mail::raw(
@@ -655,7 +679,7 @@ class UserController extends Controller
      */
     private function transformUser(User $user, bool $includePermissions = false): array
     {
-        $user->loadMissing('roles:id,name');
+        $user->loadMissing(['roles:id,name', 'assignedVehicles:id,assigned_driver_id,vehicle_no,plate_no']);
         $roles = $user->roles->pluck('name')->values();
         $languages = $this->explodeLanguages($user->languages_spoken);
         $drivingStartedAt = $this->normalizeDateString($user->driving_started_at);
@@ -667,6 +691,11 @@ class UserController extends Controller
             'name' => $user->name,
             'email' => $user->email,
             'phone' => $user->phone,
+            'tin' => $user->tin,
+            'nida' => $user->nida,
+            'bank_name' => $user->bank_name,
+            'bank_account_number' => $user->bank_account_number,
+            'assigned_vehicles' => $user->assignedVehicles->map(fn ($vehicle) => $vehicle->only(['id', 'vehicle_no', 'plate_no']))->values(),
             'languages_spoken' => $user->languages_spoken,
             'languages_spoken_list' => $languages,
             'driving_started_at' => $drivingStartedAt,
@@ -769,6 +798,8 @@ class UserController extends Controller
      */
     private function driverProfilePayload(User $user): array
     {
+        $user->loadMissing('assignedVehicles:id,assigned_driver_id,vehicle_no,plate_no');
+        $vehicleText = $user->assignedVehicles->pluck('plate_no')->filter()->implode(', ');
         $languages = $this->explodeLanguages($user->languages_spoken);
         $drivingStartedAt = $this->normalizeDateString($user->driving_started_at);
 
@@ -778,12 +809,33 @@ class UserController extends Controller
             'email' => $user->email,
             'languages' => $languages,
             'languageText' => $languages === [] ? '-' : implode(', ', $languages),
+            'vehicleText' => $vehicleText ?: '—',
             'drivingStartedAt' => $drivingStartedAt,
             'experience' => $this->calculateExperienceFromStartDate($drivingStartedAt) ?? '-',
             'driverLicense' => $user->driver_license ?: '-',
             'tourGuideLicense' => $user->tour_guide_license ?: '-',
             'generatedAt' => now()->format('d M Y H:i'),
         ];
+    }
+
+    private function resolveDriverProfileLogoDataUri(): ?string
+    {
+        $logoPath = Setting::get('logo');
+
+        if (! is_string($logoPath) || $logoPath === '' || ! Storage::disk('public')->exists($logoPath)) {
+            return null;
+        }
+
+        $contents  = Storage::disk('public')->get($logoPath);
+        $extension = strtolower(pathinfo($logoPath, PATHINFO_EXTENSION));
+        $mime      = match ($extension) {
+            'jpg', 'jpeg' => 'image/jpeg',
+            'gif'         => 'image/gif',
+            'webp'        => 'image/webp',
+            default       => 'image/png',
+        };
+
+        return 'data:' . $mime . ';base64,' . base64_encode($contents);
     }
 
     private function driverProfileFilename(User $user): string

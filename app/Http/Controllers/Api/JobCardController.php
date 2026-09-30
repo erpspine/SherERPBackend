@@ -30,7 +30,12 @@ class JobCardController extends Controller
     {
         $this->authorize('viewAny', JobCard::class);
 
-        $query = JobCard::query()->with(['lead', 'vehicle', 'leaseContract', 'leaseAllocation.vehicle', 'leaseAllocation.driver', 'leaseAllocation.leaseContract'])->latest('id');
+        $query = JobCard::query()
+            ->with(['lead', 'vehicle', 'leaseContract', 'leaseAllocation.vehicle', 'leaseAllocation.driver', 'leaseAllocation.leaseContract'])
+            ->withCount('perDiemVouchers')
+            ->withCount(['safariAllocations as assigned_driver_count' => fn ($query) => $query->whereNotNull('driver_id')])
+            ->withMax('perDiemVouchers', 'updated_at')
+            ->latest('id');
 
         if ($request->user()?->hasRole('Driver')) {
             $query->whereIn(
@@ -57,7 +62,7 @@ class JobCardController extends Controller
 
         return response()->json([
             'message' => 'Job card fetched successfully.',
-            'jobCard' => $this->transform($jobCard),
+            'jobCard' => $this->transformWithDriverProfiles($jobCard),
         ]);
     }
 
@@ -178,7 +183,182 @@ class JobCardController extends Controller
             'tax_registration_number' => Setting::get('tax_registration_number'),
         ];
 
-        $transformedJobCard = $this->transform($jobCard);
+        $transformedJobCard = $this->transformWithDriverProfiles($jobCard);
+
+        $pdf = Pdf::loadView('job-cards.pdf', [
+            'jobCard' => $transformedJobCard,
+            'company' => $company,
+            'logoDataUri' => $this->resolveLogoDataUri(),
+        ])->setPaper('a4', 'portrait');
+
+        $filename = 'job-card-' . $jobCard->id . '.pdf';
+
+        return $pdf->download($filename);
+    }
+
+    public function perDiem(Request $request, JobCard $jobCard): Response
+    {
+        $this->authorize('view', $jobCard);
+        $validated = $request->validate(['driverKey' => ['required', 'string', 'max:100']]);
+        $jobCard->load(['lead', 'vehicle', 'leaseContract', 'leaseAllocation.driver', 'leaseAllocation.vehicle']);
+        $data = $this->transformWithDriverProfiles($jobCard);
+        $driver = collect($data['driverProfiles'])->first(function ($profile) use ($validated) {
+            $key = $profile['id'] ? (string) $profile['id'] : 'manual-'.hash('sha256', trim($profile['name']));
+            return $key === $validated['driverKey'] && trim($profile['name']) !== '';
+        });
+        abort_unless($driver, 422, 'Select a driver assigned to this job card.');
+        if ($request->user()->hasRole('Driver')) {
+            abort_unless($driver['id'] === $request->user()->id, 403);
+        }
+
+        $allocatedVehicle = collect($data['allocatedVehicles'] ?? [])
+            ->first(fn (array $allocation): bool => (int) ($allocation['driverProfile']['id'] ?? 0) === (int) ($driver['id'] ?? 0));
+        $vehiclePlateNo = $allocatedVehicle['plateNo']
+            ?? ($jobCard->leaseAllocation?->vehicle?->plate_no ?? $jobCard->vehicle?->plate_no ?? '');
+        $clientName = $data['tourOperatorClientName']
+            ?: ($jobCard->leaseAllocation?->leaseContract?->client_name
+                ?? $jobCard->leaseContract?->client_name
+                ?? $jobCard->lead?->client_company
+                ?? '');
+
+        $voucher = \Illuminate\Support\Facades\DB::transaction(function () use ($jobCard, $validated, $data, $driver, $request, $vehiclePlateNo, $clientName) {
+            JobCard::whereKey($jobCard->id)->lockForUpdate()->firstOrFail();
+            $existing = \App\Models\PerDiemVoucher::where('job_card_id', $jobCard->id)
+                ->where('driver_key', $validated['driverKey'])
+                ->first();
+            $items = $data['routeItinerary'];
+            abort_if(empty($items), 422, 'Add itinerary lines and daily allowances to the job card first.');
+            $totalCents = 0;
+            foreach ($items as &$item) {
+                abort_if($item['allowancePerDay'] === null || $item['allowancePerDay'] < 0, 422,
+                    'Enter a non-negative allowance for every itinerary line before generating the voucher.');
+                $cents = (int) round($item['allowancePerDay'] * 100);
+                $item['allowancePerDay'] = $cents / 100;
+                $totalCents += $cents;
+            }
+            unset($item);
+            $snapshot = [
+                    'jobCardNo' => $data['jobCardNo'],
+                    'createdAt' => $jobCard->created_at?->format('d M Y'),
+                    'driverName' => $driver['name'],
+                    'vehiclePlateNo' => $vehiclePlateNo,
+                    'clientName' => $clientName,
+                    'groupName' => $data['groupName'],
+                    'safariStartDate' => $jobCard->safari_start_date?->format('d M Y'),
+                    'safariEndDate' => $jobCard->safari_end_date?->format('d M Y'),
+                    'items' => $items,
+                    'total' => $totalCents / 100,
+                    'preparedBy' => $request->user()->name,
+                ];
+
+            if ($existing) {
+                $existing->update(['snapshot' => $snapshot]);
+                return $existing->fresh();
+            }
+
+            return \App\Models\PerDiemVoucher::create([
+                'job_card_id' => $jobCard->id,
+                'driver_key' => $validated['driverKey'],
+                'snapshot' => $snapshot,
+            ]);
+        });
+        return $this->renderPerDiem($voucher);
+    }
+
+    public function perDiemIndex(Request $request): JsonResponse
+    {
+        $this->authorize('viewAny', JobCard::class);
+        $request->validate(['jobCardId' => ['nullable', 'integer', 'min:1']]);
+        $query = \App\Models\PerDiemVoucher::query()->latest('id');
+        if ($request->filled('jobCardId')) {
+            $query->where('job_card_id', $request->integer('jobCardId'));
+        }
+        if ($request->user()->hasRole('Driver')) {
+            $query->where('driver_key', (string) $request->user()->id)
+                ->whereHas('jobCard', fn ($q) => $q->whereIn('lead_id',
+                    SafariAllocation::where('driver_id', $request->user()->id)->select('lead_id')));
+        }
+        return response()->json(['perDiems' => $query->get()->map(fn ($voucher) => [
+            'id' => $voucher->id,
+            'number' => $voucher->number(),
+            'jobCardId' => $voucher->job_card_id,
+            'generatedAt' => $voucher->created_at->toISOString(),
+            'updatedAt' => $voucher->updated_at->toISOString(),
+            'driverKey' => $voucher->driver_key,
+            ...$voucher->snapshot,
+        ])]);
+    }
+
+    public function perDiemPdf(Request $request, \App\Models\PerDiemVoucher $voucher): Response
+    {
+        $this->authorize('view', $voucher->jobCard);
+        if ($request->user()->hasRole('Driver')) {
+            abort_unless($voucher->driver_key === (string) $request->user()->id, 403);
+        }
+        return $this->renderPerDiem($voucher);
+    }
+
+    private function renderPerDiem(\App\Models\PerDiemVoucher $voucher): Response
+    {
+        $voucherData = $voucher->snapshot;
+        $jobCard = $voucher->jobCard()->with([
+            'lead',
+            'vehicle',
+            'leaseContract',
+            'leaseAllocation.vehicle',
+            'leaseAllocation.leaseContract',
+        ])->first();
+
+        if (empty($voucherData['vehiclePlateNo']) && $jobCard) {
+            $vehicle = $jobCard->leaseAllocation?->vehicle ?? $jobCard->vehicle;
+            if ($jobCard->lead_id && ctype_digit((string) $voucher->driver_key)) {
+                $vehicle = SafariAllocation::query()
+                    ->with('vehicle')
+                    ->where('lead_id', $jobCard->lead_id)
+                    ->where('driver_id', (int) $voucher->driver_key)
+                    ->first()?->vehicle ?? $vehicle;
+            }
+            $voucherData['vehiclePlateNo'] = $vehicle?->plate_no ?? '';
+        }
+
+        if (empty($voucherData['clientName']) && $jobCard) {
+            $voucherData['clientName'] = $jobCard->tour_operator_client_name
+                ?: ($jobCard->lead?->client_company
+                    ?? $jobCard->leaseAllocation?->leaseContract?->client_name
+                    ?? $jobCard->leaseContract?->client_name
+                    ?? '');
+        }
+
+        $number = $voucher->number();
+        return Pdf::loadView('job-cards.per-diem', [
+            'voucher' => $voucherData,
+            'number' => $number,
+            'company' => [
+                'name' => Setting::get('company_name', config('app.name')),
+                'address' => Setting::get('company_address'),
+                'phone' => Setting::get('company_phone'),
+                'email' => Setting::get('company_email'),
+            ],
+            'logoDataUri' => $this->resolveLogoDataUri(),
+        ])->setPaper('a5', 'portrait')->download($number.'.pdf');
+    }
+
+    private function driverGuideProfile($driver, $vehicle): array
+    {
+        return [
+            'id' => $driver?->id,
+            'name' => $driver?->name ?? '',
+            'phone' => $driver?->phone ?? '',
+            'languages' => $driver?->languages_spoken ?? '',
+            'driverLicense' => $driver?->driver_license ?? '',
+            'guideLicense' => $driver?->tour_guide_license ?? '',
+            'plateNo' => $vehicle?->plate_no ?? '',
+        ];
+    }
+
+    private function transformWithDriverProfiles(JobCard $jobCard): array
+    {
+        $result = $this->transform($jobCard);
 
         if ($this->isSafariType($jobCard->type) && $jobCard->lead_id) {
             $allocations = SafariAllocation::query()
@@ -188,12 +368,13 @@ class JobCardController extends Controller
                 ->orderBy('id')
                 ->get();
 
-            $transformedJobCard['allocatedVehicles'] = $allocations
+            $result['allocatedVehicles'] = $allocations
                 ->map(function (SafariAllocation $allocation): array {
                     return [
                         'vehicleNo' => (string) ($allocation->vehicle?->vehicle_no ?? ''),
                         'plateNo' => (string) ($allocation->vehicle?->plate_no ?? ''),
                         'driverName' => (string) ($allocation->driver?->name ?? ''),
+                        'driverProfile' => $this->driverGuideProfile($allocation->driver, $allocation->vehicle),
                     ];
                 })
                 ->filter(fn(array $item): bool => trim($item['vehicleNo']) !== '' || trim($item['plateNo']) !== '' || trim($item['driverName']) !== '')
@@ -206,15 +387,29 @@ class JobCardController extends Controller
                 ->all();
         }
 
-        $pdf = Pdf::loadView('job-cards.pdf', [
-            'jobCard' => $transformedJobCard,
-            'company' => $company,
-            'logoDataUri' => $this->resolveLogoDataUri(),
-        ])->setPaper('a4', 'portrait');
+        if (!empty($result['allocatedVehicles'])) {
+            $result['driverProfiles'] = array_column($result['allocatedVehicles'], 'driverProfile');
+        } else {
+            $vehicle = $jobCard->leaseAllocation?->vehicle ?? $jobCard->vehicle;
+            $driver = $jobCard->leaseAllocation?->driver;
+            if (!$driver && $vehicle) {
+                $vehicle->loadMissing('assignedDriver');
+                $driver = $vehicle->assignedDriver;
+            }
+            $profile = $this->driverGuideProfile($driver, $vehicle);
+            // Preserve manually entered driver details when no linked driver exists.
+            if (!$driver) {
+                $profile['name'] = $jobCard->driver_details ?? '';
+                $profile['languages'] = $jobCard->guide_language ?? '';
+            }
+            $result['driverProfiles'] = [$profile];
+        }
 
-        $filename = 'job-card-' . $jobCard->id . '.pdf';
-
-        return $pdf->download($filename);
+        foreach ($result['driverProfiles'] as &$profile) {
+            $profile['key'] = $profile['id'] ? (string) $profile['id'] : 'manual-'.hash('sha256', trim($profile['name']));
+        }
+        unset($profile);
+        return $result;
     }
 
     private function generateJobCardNo(int $id): string
@@ -538,6 +733,11 @@ class JobCardController extends Controller
             'approximateFuelUsed' => $jobCard->approximate_fuel_used !== null ? (float) $jobCard->approximate_fuel_used : null,
             'driverDetails' => $jobCard->driver_details,
             'driverAllowance' => $jobCard->driver_allowance !== null ? (float) $jobCard->driver_allowance : null,
+            'perDiemCount' => (int) ($jobCard->per_diem_vouchers_count ?? 0),
+            'assignedDriverCount' => (int) ($jobCard->assigned_driver_count ?? 0),
+            'perDiemUpdatedAt' => $jobCard->per_diem_vouchers_max_updated_at
+                ? \Carbon\Carbon::parse($jobCard->per_diem_vouchers_max_updated_at)->toISOString()
+                : null,
             'vehicle' => $jobCard->vehicle ? [
                 'id' => $jobCard->vehicle->id,
                 'vehicle_no' => $jobCard->vehicle->vehicle_no,

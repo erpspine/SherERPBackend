@@ -28,8 +28,10 @@ use App\Http\Controllers\Api\ChecklistItemController;
 use App\Http\Controllers\Api\DestinationDistanceController;
 use App\Http\Controllers\Api\InspectionController;
 use App\Http\Controllers\Api\IncidentReportController;
+use App\Http\Controllers\Api\InventoryController;
 use App\Http\Controllers\Api\FuelRequisitionController;
 use App\Http\Controllers\Api\OdometerLogController;
+use App\Http\Controllers\Api\AuditLogController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [UserController::class, 'login']);
@@ -37,8 +39,9 @@ Route::post('/forgot-password', [UserController::class, 'forgotPassword']);
 Route::post('/reset-password', [UserController::class, 'resetPassword']);
 Route::post('/leads/capture-from-website', [LeadController::class, 'captureFromWebsite'])->middleware('validate.lead.api.key', 'throttle:30,1');
 
-Route::middleware('auth:sanctum')->group(function (): void {
+Route::middleware(['auth:sanctum', 'audit.mutations', 'restrict.deletes'])->group(function (): void {
     Route::get('/dashboard', [DashboardController::class, 'index'])->middleware('permission:dashboard.view');
+    Route::get('/audit-logs', [AuditLogController::class, 'index'])->middleware('permission:users.view');
     Route::get('/me', [UserController::class, 'me']);
 
     Route::get('/users', [UserController::class, 'index'])->middleware('permission:users.view');
@@ -79,8 +82,21 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::put('/inspections/{inspection}', [InspectionController::class, 'update']);
     Route::delete('/inspections/{inspection}', [InspectionController::class, 'destroy']);
 
+    Route::prefix('performance-cases')->controller(\App\Http\Controllers\Api\PerformanceCaseController::class)->group(function (): void {
+        Route::get('/', 'index')->middleware('permission:vehicles.view');
+        Route::get('/bookings', 'bookings')->middleware('permission:vehicles.view');
+        Route::post('/', 'store')->middleware('permission:vehicles.update');
+        Route::get('/{incidentReport}', 'show')->middleware('permission:vehicles.view');
+        Route::put('/{incidentReport}/stages/{letter}', 'saveStage')->middleware('permission:vehicles.update');
+        Route::post('/{incidentReport}/feedback', 'feedback')->middleware('permission:vehicles.update');
+        Route::post('/{incidentReport}/attachments', 'upload')->middleware('permission:vehicles.update');
+        Route::get('/{incidentReport}/attachments/{attachment}', 'download')->middleware('permission:vehicles.view');
+        Route::delete('/{incidentReport}/attachments/{attachment}', 'removeAttachment')->middleware('permission:vehicles.update');
+    });
+
     Route::get('/incident-reports', [IncidentReportController::class, 'index'])->middleware('permission:vehicles.view');
     Route::get('/incident-reports/export/excel', [IncidentReportController::class, 'exportExcel'])->middleware('permission:vehicles.view');
+    Route::get('/incident-reports/export/pdf', [IncidentReportController::class, 'exportPdf'])->middleware('permission:vehicles.view');
     Route::get('/incident-reports/{incidentReport}', [IncidentReportController::class, 'show'])->middleware('permission:vehicles.view');
     Route::post('/incident-reports', [IncidentReportController::class, 'store'])->middleware('permission:vehicles.update');
     Route::post('/incident-reports/{incidentReport}', [IncidentReportController::class, 'update'])->middleware('permission:vehicles.update');
@@ -93,6 +109,22 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::match(['patch', 'put'], '/fuel-requisitions/{fuelRequisition}', [FuelRequisitionController::class, 'updateStatus'])->middleware('permission:fuel-requisitions.respond');
     Route::post('/fuel-requisitions/{fuelRequisition}/approve', [FuelRequisitionController::class, 'approve'])->middleware('permission:fuel-requisitions.respond');
     Route::post('/fuel-requisitions/{fuelRequisition}/reject', [FuelRequisitionController::class, 'reject'])->middleware('permission:fuel-requisitions.respond');
+
+    Route::get('/inventory/categories', [InventoryController::class, 'categories'])->middleware('permission:inventory.view');
+    Route::post('/inventory/categories', [InventoryController::class, 'storeCategory'])->middleware('permission:inventory.create');
+    Route::put('/inventory/categories/{inventoryCategory}', [InventoryController::class, 'updateCategory'])->middleware('permission:inventory.update');
+    Route::delete('/inventory/categories/{inventoryCategory}', [InventoryController::class, 'destroyCategory'])->middleware('permission:inventory.delete');
+
+    Route::get('/inventory/items', [InventoryController::class, 'items'])->middleware('permission:inventory.view');
+    Route::get('/inventory/items/{inventoryItem}', [InventoryController::class, 'showItem'])->middleware('permission:inventory.view');
+    Route::post('/inventory/items', [InventoryController::class, 'storeItem'])->middleware('permission:inventory.create');
+    Route::put('/inventory/items/{inventoryItem}', [InventoryController::class, 'updateItem'])->middleware('permission:inventory.update');
+    Route::delete('/inventory/items/{inventoryItem}', [InventoryController::class, 'destroyItem'])->middleware('permission:inventory.delete');
+    Route::post('/inventory/items/{inventoryItem}/stock-in', [InventoryController::class, 'stockIn'])->middleware('permission:inventory.update');
+    Route::post('/inventory/items/{inventoryItem}/issue', [InventoryController::class, 'issue'])->middleware('permission:inventory.update');
+    Route::get('/inventory/items/{inventoryItem}/movements', [InventoryController::class, 'itemMovements'])->middleware('permission:inventory.view');
+
+    Route::get('/inventory/movements', [InventoryController::class, 'movements'])->middleware('permission:inventory.view');
 
     Route::get('/leads', [LeadController::class, 'index'])->middleware('permission:leads.view');
     Route::get('/leads/{lead}', [LeadController::class, 'show'])->middleware('permission:leads.view');
@@ -198,6 +230,8 @@ Route::middleware('auth:sanctum')->group(function (): void {
 
     // Vehicle Services
     Route::get('/vehicle-services', [VehicleServiceController::class, 'index'])->middleware('permission:vehicles.view');
+    Route::get('/vehicle-services/export/excel', [VehicleServiceController::class, 'exportExcel'])->middleware('permission:vehicles.view');
+    Route::get('/vehicle-services/export/pdf', [VehicleServiceController::class, 'exportPdf'])->middleware('permission:vehicles.view');
     Route::get('/vehicle-services/{vehicleService}', [VehicleServiceController::class, 'show'])->middleware('permission:vehicles.view');
     Route::post('/vehicle-services', [VehicleServiceController::class, 'store'])->middleware('permission:vehicles.update');
     Route::put('/vehicle-services/{vehicleService}', [VehicleServiceController::class, 'update'])->middleware('permission:vehicles.update');
@@ -206,12 +240,17 @@ Route::middleware('auth:sanctum')->group(function (): void {
     // Job Cards
     Route::get('/job-cards', [JobCardController::class, 'index'])->middleware('permission:job-cards.view');
     Route::get('/job-cards/{jobCard}', [JobCardController::class, 'show'])->middleware('permission:job-cards.view');
+    Route::get('/per-diems', [JobCardController::class, 'perDiemIndex'])->middleware('permission:job-cards.view');
+    Route::get('/per-diems/{voucher}/pdf', [JobCardController::class, 'perDiemPdf'])->middleware('permission:job-cards.view');
+    Route::post('/job-cards/{jobCard}/per-diem', [JobCardController::class, 'perDiem'])->middleware('permission:job-cards.view');
     Route::get('/job-cards/{jobCard}/pdf', [JobCardController::class, 'pdf'])->middleware('permission:job-cards.view');
     Route::post('/job-cards', [JobCardController::class, 'store'])->middleware('permission:job-cards.create');
     Route::put('/job-cards/{jobCard}', [JobCardController::class, 'update'])->middleware('permission:job-cards.update');
     Route::delete('/job-cards/{jobCard}', [JobCardController::class, 'destroy'])->middleware('permission:job-cards.delete');
 
     Route::get('/safari-allocations', [SafariAllocationController::class, 'index'])->middleware('permission:safari-allocations.view');
+    Route::get('/safari-allocations/export/excel', [SafariAllocationController::class, 'exportExcel'])->middleware('permission:safari-allocations.view');
+    Route::get('/safari-allocations/export/pdf', [SafariAllocationController::class, 'exportPdf'])->middleware('permission:safari-allocations.view');
     Route::get('/safari-allocations/{safariAllocation}', [SafariAllocationController::class, 'show'])->middleware('permission:safari-allocations.view');
     Route::post('/safari-allocations', [SafariAllocationController::class, 'store'])->middleware('permission:safari-allocations.create');
     Route::put('/safari-allocations/{safariAllocation}', [SafariAllocationController::class, 'update'])->middleware('permission:safari-allocations.update');
@@ -237,6 +276,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
         ->middleware('permission:odometer-logs.create');
     Route::get('/lease-allocations', [LeaseAllocationController::class, 'index'])->middleware('permission:vehicles.view');
     Route::get('/lease-allocations/export/excel', [LeaseAllocationController::class, 'exportExcel'])->middleware('permission:vehicles.view');
+    Route::get('/lease-allocations/export/pdf', [LeaseAllocationController::class, 'exportPdf'])->middleware('permission:vehicles.view');
     Route::get('/lease-allocations/{leaseAllocation}', [LeaseAllocationController::class, 'show'])->middleware('permission:vehicles.view');
     Route::post('/lease-allocations', [LeaseAllocationController::class, 'store'])->middleware('permission:vehicles.create');
     Route::put('/lease-allocations/{leaseAllocation}', [LeaseAllocationController::class, 'update'])->middleware('permission:vehicles.update');
@@ -251,6 +291,12 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::delete('/lease-proforma-invoices/{leaseProformaInvoice}', [LeaseProformaInvoiceController::class, 'destroy'])->middleware('permission:proforma-invoices.create');
     Route::post('/lease-proforma-invoices/{leaseProformaInvoice}/payments', [LeaseProformaInvoiceController::class, 'addPayment'])->middleware('permission:invoice-payments.create');
     Route::delete('/lease-proforma-invoices/{leaseProformaInvoice}/payments/{payment}', [LeaseProformaInvoiceController::class, 'deletePayment'])->middleware('permission:invoice-payments.delete');
+
+    Route::get('/fuel-management', [\App\Http\Controllers\Api\FuelManagementController::class, 'index'])->middleware(['permission:odometer-logs.view', 'permission:safari-allocations.view']);
+    Route::get('/fuel-management/export/pdf', [\App\Http\Controllers\Api\FuelManagementController::class, 'exportPdf'])->middleware(['permission:odometer-logs.view', 'permission:safari-allocations.view']);
+    Route::put('/fuel-management/monthly-price', [\App\Http\Controllers\Api\FuelManagementController::class, 'saveMonthlyPrice'])->middleware(['permission:odometer-logs.update', 'permission:safari-allocations.view']);
+    Route::put('/fuel-management/{allocationType}/{allocationId}', [\App\Http\Controllers\Api\FuelManagementController::class, 'save'])->middleware('permission:safari-allocations.view');
+    Route::delete('/fuel-management/{allocationType}/{allocationId}', [\App\Http\Controllers\Api\FuelManagementController::class, 'destroy'])->middleware('permission:odometer-logs.view');
 
     // Odometer Logs – per trip (safari allocation) reading history captured
     // by drivers. Idempotent on client_id so the offline outbox can retry.

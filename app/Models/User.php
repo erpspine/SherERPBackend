@@ -11,12 +11,17 @@ use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 use Spatie\Permission\Traits\HasRoles;
 
-#[Fillable(['name', 'email', 'phone', 'languages_spoken', 'work_experience', 'driving_started_at', 'driver_license', 'tour_guide_license', 'role', 'status', 'blacklist_reason', 'receive_notifications', 'last_login_at', 'password'])]
+#[Fillable(['name', 'email', 'phone', 'tin', 'nida', 'bank_name', 'bank_account_number', 'languages_spoken', 'work_experience', 'driving_started_at', 'driver_license', 'tour_guide_license', 'role', 'status', 'blacklist_reason', 'receive_notifications', 'last_login_at', 'password'])]
 #[Hidden(['password', 'remember_token'])]
 class User extends Authenticatable
 {
     /** @use HasFactory<\Database\Factories\UserFactory> */
     use HasApiTokens, HasFactory, HasRoles, Notifiable;
+
+    public function assignedVehicles(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(Vehicle::class, 'assigned_driver_id');
+    }
 
     protected string $guard_name = 'web';
 
