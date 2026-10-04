@@ -96,16 +96,32 @@ class FuelManagementController extends Controller
                     'days' => $days,
                     'litres' => $calculated->count() ? round($litres, 2) : null,
                     'km' => $calculated->count() ? $km : null,
+                    'average_km_per_trip' => $days > 0 && $calculated->count() ? round($km / $days, 2) : null,
                     'expected' => $calculated->count() ? round($expected, 2) : null,
                     'excess' => $calculated->count() ? round($excess, 2) : null,
                     'deduction' => $status === 'Target not set' ? 'Target not set' : ($status === 'Deduction' ? ($price === null ? 'Price not set' : round($excess * $price, 2)) : 0),
                     'average' => $litres > 0 ? round($km / $litres, 2) : null,
-                    'average_km_per_trip' => $days > 0 && $calculated->count() ? round($km / $days, 2) : null,
                     'status' => $status,
                 ];
             })->values();
             $title = 'FUEL CONSUMPTION REPORT';
-            $columns = ['Vehicle', 'Driver', 'Month', 'Price/L', 'Trips', 'Total days', 'Consumed L', 'Total KM', 'Expected L', 'Excess L', 'Deduction', 'Actual average km/L', 'Average KM per trip', 'Status'];
+            $columns = ['Vehicle', 'Driver', 'Month', 'Price/L', 'Trips', 'Total days', 'Consumed L', 'Total KM', 'Average KM per trip', 'Expected L', 'Excess L', 'Deduction', 'Actual average km/L', 'Status'];
+            $totalDays = $groups->every(fn(array $row): bool => $row['days'] !== null) ? $groups->sum('days') : null;
+            $totalLitres = (float) $groups->sum(fn(array $row): float => (float) ($row['litres'] ?? 0));
+            $totalKm = (float) $groups->sum(fn(array $row): float => (float) ($row['km'] ?? 0));
+            $deductionSummary = $groups->contains(fn(array $row): bool => $row['deduction'] === 'Target not set')
+                ? 'Target not set'
+                : ($groups->contains(fn(array $row): bool => $row['deduction'] === 'Price not set')
+                    ? 'Price not set'
+                    : round($groups->sum(fn(array $row): float => is_numeric($row['deduction']) ? (float) $row['deduction'] : 0), 2));
+            $summary = [
+                'trips' => $groups->sum('trips'),
+                'days' => $totalDays,
+                'litres' => $totalLitres > 0 ? round($totalLitres, 2) : null,
+                'km' => $totalKm > 0 ? round($totalKm, 2) : null,
+                'daily_average' => $totalDays > 0 ? round($totalKm / $totalDays, 2) : null,
+                'deductions' => $deductionSummary,
+            ];
         } else {
             $groups = $rows->filter(function (array $row) use ($request, $dateFrom, $dateTo): bool {
                 $date = substr((string) ($row['filled_at'] ?? ''), 0, 10);
@@ -138,7 +154,7 @@ class FuelManagementController extends Controller
         }
 
         $company = ['name' => Setting::get('company_name', config('app.name')), 'email' => Setting::get('company_email'), 'phone' => Setting::get('company_phone'), 'address' => Setting::get('company_address')];
-        $viewData = ['title' => $title, 'columns' => $columns, 'rows' => $groups, 'company' => $company, 'logoDataUri' => $this->resolveLogoDataUri(), 'dateFrom' => $dateFrom, 'dateTo' => $dateTo, 'generatedAt' => now()->format('d/m/Y H:i')];
+        $viewData = ['title' => $title, 'columns' => $columns, 'rows' => $groups, 'summary' => $summary ?? null, 'company' => $company, 'logoDataUri' => $this->resolveLogoDataUri(), 'dateFrom' => $dateFrom, 'dateTo' => $dateTo, 'generatedAt' => now()->format('d/m/Y H:i')];
         $html = view()->file(resource_path('views/fuel-management.pdf.blade.php'), $viewData)->render();
         $pdf = Pdf::loadHTML($html)->setPaper('a4', 'landscape');
         $filename = ($isReport ? 'fuel-consumption-report-' : 'safari-fuel-averages-') . now()->format('Ymd-His') . '.pdf';

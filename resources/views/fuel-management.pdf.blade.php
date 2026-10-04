@@ -191,22 +191,40 @@
                 </tr>
             </table>
             <table class="summary">
-                <tr>
-                    <td>
-                        <div class="label">Total records</div>
-                        <div class="value">{{ $rows->count() }}</div>
-                    </td>
-                    <td>
-                        <div class="label">Date range</div>
-                        <div class="value">{{ $displayDate($dateFrom) ?: 'All' }} - {{ $displayDate($dateTo) ?: 'All' }}</div>
-                    </td>
-                    <td>
-                        <div class="label">Report type</div>
-                        <div class="value">
-                            {{ str_contains($title, 'CONSUMPTION') ? 'Per vehicle totals' : 'Safari fuel entries' }}
-                        </div>
-                    </td>
-                </tr>
+                @if ($summary)
+                    <tr>
+                        @foreach ([
+                            'Total trips' => $summary['trips'],
+                            'Total days' => $summary['days'],
+                            'Consumed litres' => $summary['litres'],
+                            'Total KM' => $summary['km'],
+                            'Daily average' => $summary['daily_average'] !== null ? $summary['daily_average'] . ' km/day' : null,
+                            'Total deductions' => $summary['deductions'],
+                        ] as $label => $value)
+                            <td>
+                                <div class="label">{{ $label }}</div>
+                                <div class="value">{{ $value === null || $value === '' ? '—' : (is_numeric($value) ? number_format($value, 2) : $value) }}</div>
+                            </td>
+                        @endforeach
+                    </tr>
+                @else
+                    <tr>
+                        <td>
+                            <div class="label">Total records</div>
+                            <div class="value">{{ $rows->count() }}</div>
+                        </td>
+                        <td>
+                            <div class="label">Date range</div>
+                            <div class="value">{{ $displayDate($dateFrom) ?: 'All' }} - {{ $displayDate($dateTo) ?: 'All' }}</div>
+                        </td>
+                        <td>
+                            <div class="label">Report type</div>
+                            <div class="value">
+                                {{ str_contains($title, 'CONSUMPTION') ? 'Per vehicle totals' : 'Safari fuel entries' }}
+                            </div>
+                        </td>
+                    </tr>
+                @endif
             </table>
             <div class="section-title">{{ $title }}</div>
             <table class="report-table">
