@@ -21,7 +21,8 @@ class FuelRequisitionController extends Controller
     {
         $fuelRequisitions = FuelRequisition::query()
             ->with(['lead', 'requester', 'responder', 'approvedBy', 'rejectedBy', 'amendedBy'])
-            ->latest('id')
+            ->orderByDesc('request_date')
+            ->orderByDesc('id')
             ->get();
 
         return response()->json([
@@ -46,6 +47,7 @@ class FuelRequisitionController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'leadId' => ['required', 'integer', 'exists:leads,id', Rule::unique('fuel_requisitions', 'lead_id')],
+            'requestDate' => ['sometimes', 'nullable', 'date_format:Y-m-d'],
             'litres' => ['required', 'numeric', 'gt:0', 'max:99999.99'],
             'baseRatePerKm' => ['required', 'numeric', 'gt:0'],
             'reason' => ['required', 'string', 'max:2000'],
@@ -131,6 +133,7 @@ class FuelRequisitionController extends Controller
         $fuelRequisition = FuelRequisition::create([
             'lead_id' => (int) $validated['leadId'],
             'user_id' => $requestUser->id,
+            'request_date' => $validated['requestDate'] ?? now()->toDateString(),
             'litres' => $validated['litres'],
             'base_rate_per_km' => $validated['baseRatePerKm'],
             'reason' => trim((string) $validated['reason']),
@@ -264,6 +267,7 @@ class FuelRequisitionController extends Controller
                 'clientCompany' => $fuelRequisition->lead?->client_company,
             ],
             'leadId' => $fuelRequisition->lead_id,
+            'requestDate' => $fuelRequisition->request_date?->format('Y-m-d'),
             'litres' => (float) $fuelRequisition->litres,
             'baseRatePerKm' => $fuelRequisition->base_rate_per_km !== null ? (float) $fuelRequisition->base_rate_per_km : null,
             'reason' => $fuelRequisition->reason,

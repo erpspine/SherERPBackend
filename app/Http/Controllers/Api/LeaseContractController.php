@@ -11,6 +11,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class LeaseContractController extends Controller
 {
@@ -52,20 +53,25 @@ class LeaseContractController extends Controller
         $validated = $this->validatePayload($request);
 
         $contract = DB::transaction(function () use ($validated): LeaseContract {
-            $duration = $this->calcDays($validated['startDate'], $validated['endDate']);
-            $leaseType = $this->resolveLeaseType($duration);
-            $vehicleIds = $validated['vehicleIds'] ?? [];
+            $isParentCompany = (bool) ($validated['isParentCompany'] ?? false);
+            $duration = $isParentCompany
+                ? null
+                : $this->calcDays($validated['startDate'], $validated['endDate']);
+            $leaseType = $isParentCompany ? null : $this->resolveLeaseType($duration);
+            $vehicleIds = $isParentCompany ? [] : ($validated['vehicleIds'] ?? []);
 
             $contract = LeaseContract::create([
                 'client_name' => $validated['clientName'],
+                'parent_client_name' => $isParentCompany ? null : ($validated['parentClientName'] ?? null),
+                'is_parent_company' => $isParentCompany,
                 'group_name' => $validated['groupName'] ?? null,
                 'lease_type' => $leaseType,
-                'start_date' => $validated['startDate'],
-                'end_date' => $validated['endDate'],
+                'start_date' => $isParentCompany ? null : $validated['startDate'],
+                'end_date' => $isParentCompany ? null : $validated['endDate'],
                 'duration_days' => $duration,
                 'monthly_rate' => $validated['monthlyRate'] ?? null,
                 'notes' => $validated['notes'] ?? null,
-                'status' => 'Active',
+                'status' => $validated['status'] ?? 'Active',
             ]);
 
             $contract->vehicles()->sync($vehicleIds);
@@ -87,7 +93,9 @@ class LeaseContractController extends Controller
 
         $contract->load('vehicles');
 
-        JobCard::ensureForLeaseContract($contract);
+        if (!$contract->is_parent_company) {
+            JobCard::ensureForLeaseContract($contract);
+        }
 
         return response()->json([
             'message' => 'Lease contract created successfully.',
@@ -98,20 +106,48 @@ class LeaseContractController extends Controller
     public function update(Request $request, LeaseContract $leaseContract): JsonResponse
     {
         $validated = $this->validatePayload($request);
+        $previousClientName = $leaseContract->client_name;
+        $hasChildren = LeaseContract::query()
+            ->where('parent_client_name', $previousClientName)
+            ->exists();
+        $willBeParent = array_key_exists('isParentCompany', $validated)
+            ? (bool) $validated['isParentCompany']
+            : (bool) $leaseContract->is_parent_company;
+        if ($hasChildren && !$willBeParent) {
+            throw ValidationException::withMessages([
+                'isParentCompany' => 'This company has child contracts and must remain a parent company.',
+            ]);
+        }
 
-        DB::transaction(function () use ($validated, $leaseContract): void {
-            $duration = $this->calcDays($validated['startDate'], $validated['endDate']);
-            $leaseType = $this->resolveLeaseType($duration);
-            $vehicleIds = $validated['vehicleIds'] ?? [];
+        DB::transaction(function () use ($validated, $leaseContract, $previousClientName, $willBeParent): void {
+            $isParentCompany = array_key_exists('isParentCompany', $validated)
+                ? (bool) $validated['isParentCompany']
+                : (bool) $leaseContract->is_parent_company;
+            $effectiveStartDate = $validated['startDate'] ?? null;
+            $effectiveEndDate = $validated['endDate'] ?? null;
+            if (!$isParentCompany && (!$effectiveStartDate || !$effectiveEndDate)) {
+                throw ValidationException::withMessages([
+                    'startDate' => 'Start and end dates are required when converting a parent into a lease contract.',
+                ]);
+            }
+            $duration = $isParentCompany
+                ? null
+                : $this->calcDays($effectiveStartDate, $effectiveEndDate);
+            $leaseType = $isParentCompany ? null : $this->resolveLeaseType($duration);
+            $vehicleIds = $isParentCompany ? [] : ($validated['vehicleIds'] ?? []);
 
             $oldVehicleIds = $leaseContract->vehicles()->pluck('vehicles.id')->all();
 
             $leaseContract->update([
                 'client_name' => $validated['clientName'],
+                'parent_client_name' => $isParentCompany ? null : (array_key_exists('parentClientName', $validated)
+                    ? $validated['parentClientName']
+                    : $leaseContract->parent_client_name),
+                'is_parent_company' => $isParentCompany,
                 'group_name' => $validated['groupName'] ?? $leaseContract->group_name,
                 'lease_type' => $leaseType,
-                'start_date' => $validated['startDate'],
-                'end_date' => $validated['endDate'],
+                'start_date' => $isParentCompany ? null : $effectiveStartDate,
+                'end_date' => $isParentCompany ? null : $effectiveEndDate,
                 'duration_days' => $duration,
                 'monthly_rate' => $validated['monthlyRate'] ?? null,
                 'notes' => $validated['notes'] ?? null,
@@ -133,7 +169,7 @@ class LeaseContractController extends Controller
                 ]);
             }
 
-            if ($leaseContract->status === 'Active' && $vehicleIds !== []) {
+            if (! $isParentCompany && $leaseContract->status === 'Active' && $vehicleIds !== []) {
                 Vehicle::query()->whereIn('id', $vehicleIds)->update([
                     'status' => 'On Lease',
                     'lease_type' => $leaseType,
@@ -144,11 +180,17 @@ class LeaseContractController extends Controller
                     'lease_notes' => $validated['notes'] ?? null,
                 ]);
             }
+
+            if ($willBeParent && $previousClientName !== $leaseContract->client_name) {
+                LeaseContract::query()
+                    ->where('parent_client_name', $previousClientName)
+                    ->update(['parent_client_name' => $leaseContract->client_name]);
+            }
         });
 
         $leaseContract->load('vehicles');
 
-        if ($leaseContract->status === 'Active') {
+        if (! $leaseContract->is_parent_company && $leaseContract->status === 'Active') {
             JobCard::ensureForLeaseContract($leaseContract);
         }
 
@@ -160,6 +202,16 @@ class LeaseContractController extends Controller
 
     public function destroy(LeaseContract $leaseContract): JsonResponse
     {
+        if (
+            $leaseContract->is_parent_company && LeaseContract::query()
+            ->where('parent_client_name', $leaseContract->client_name)
+            ->exists()
+        ) {
+            throw ValidationException::withMessages([
+                'clientName' => 'Move or remove child lease contracts before deleting this parent company.',
+            ]);
+        }
+
         DB::transaction(function () use ($leaseContract): void {
             $vehicleIds = $leaseContract->vehicles()->pluck('vehicles.id')->all();
 
@@ -193,6 +245,7 @@ class LeaseContractController extends Controller
 
         $expired = LeaseContract::query()
             ->where('status', 'Active')
+            ->where('is_parent_company', false)
             ->whereDate('end_date', '<', $today)
             ->with('vehicles:id')
             ->get();
@@ -222,21 +275,80 @@ class LeaseContractController extends Controller
     }
 
     /**
-     * @return array{clientName: string, startDate: string, endDate: string, vehicleIds: array<int, int>, monthlyRate: ?string, notes: ?string, status: ?string}
+     * @return array{clientName: string, parentClientName: ?string, startDate: string, endDate: string, vehicleIds: array<int, int>, monthlyRate: ?string, notes: ?string, status: ?string}
      */
     private function validatePayload(Request $request): array
     {
-        return $request->validate([
+        $isParentCompany = $request->boolean('isParentCompany');
+        $validated = $request->validate([
             'clientName' => ['required', 'string', 'max:150'],
+            'isParentCompany' => ['sometimes', 'boolean'],
+            'parentClientName' => [
+                'nullable',
+                'string',
+                'max:150',
+                Rule::exists('lease_contracts', 'client_name')->where(
+                    fn($query) => $query->where('is_parent_company', true),
+                ),
+            ],
             'groupName' => ['nullable', 'string', 'max:150'],
-            'startDate' => ['required', 'date_format:Y-m-d'],
-            'endDate' => ['required', 'date_format:Y-m-d', 'after_or_equal:startDate'],
+            'startDate' => $isParentCompany ? ['nullable', 'date_format:Y-m-d'] : ['required', 'date_format:Y-m-d'],
+            'endDate' => $isParentCompany ? ['nullable', 'date_format:Y-m-d'] : ['required', 'date_format:Y-m-d', 'after_or_equal:startDate'],
             'vehicleIds' => ['nullable', 'array'],
             'vehicleIds.*' => ['integer', 'exists:vehicles,id'],
             'monthlyRate' => ['nullable', 'numeric', 'min:0'],
             'notes' => ['nullable', 'string', 'max:2000'],
             'status' => ['nullable', Rule::in(self::STATUSES)],
         ]);
+
+        $currentContract = $request->route('leaseContract');
+        $effectiveIsParent = array_key_exists('isParentCompany', $validated)
+            ? (bool) $validated['isParentCompany']
+            : ($currentContract instanceof LeaseContract && $currentContract->is_parent_company);
+        $parentClientName = array_key_exists('parentClientName', $validated)
+            ? $validated['parentClientName']
+            : ($currentContract instanceof LeaseContract ? $currentContract->parent_client_name : null);
+        if ($effectiveIsParent && $parentClientName) {
+            throw ValidationException::withMessages([
+                'parentClientName' => 'A parent company cannot itself have a parent.',
+            ]);
+        }
+        if (!empty($parentClientName) && strcasecmp(trim($parentClientName), trim($validated['clientName'])) === 0) {
+            throw ValidationException::withMessages([
+                'parentClientName' => 'A client cannot be its own parent.',
+            ]);
+        }
+
+        if ($effectiveIsParent) {
+            $duplicateParent = LeaseContract::query()
+                ->where('is_parent_company', true)
+                ->whereRaw('LOWER(TRIM(client_name)) = ?', [mb_strtolower(trim($validated['clientName']))])
+                ->when($currentContract instanceof LeaseContract, fn($query) => $query->whereKeyNot($currentContract->id))
+                ->exists();
+            if ($duplicateParent) {
+                throw ValidationException::withMessages([
+                    'clientName' => 'A parent company with this name already exists.',
+                ]);
+            }
+        }
+
+        if (!$effectiveIsParent && LeaseContract::query()
+            ->where('is_parent_company', true)
+            ->whereRaw('LOWER(TRIM(client_name)) = ?', [mb_strtolower(trim($validated['clientName']))])
+            ->exists()
+        ) {
+            throw ValidationException::withMessages([
+                'clientName' => 'This name is already used by a parent company. Choose a distinct child lease name.',
+            ]);
+        }
+
+        if ($effectiveIsParent && !empty($validated['vehicleIds'])) {
+            throw ValidationException::withMessages([
+                'vehicleIds' => 'Parent companies cannot have vehicles assigned; add vehicles to a child lease contract.',
+            ]);
+        }
+
+        return $validated;
     }
 
     private function calcDays(string $start, string $end): int
@@ -263,6 +375,8 @@ class LeaseContractController extends Controller
         return [
             'id' => $contract->id,
             'clientName' => $contract->client_name,
+            'isParentCompany' => (bool) $contract->is_parent_company,
+            'parentClientName' => $contract->parent_client_name,
             'groupName' => $contract->group_name,
             'leaseType' => $contract->lease_type,
             'startDate' => optional($contract->start_date)->toDateString(),

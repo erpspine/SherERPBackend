@@ -48,6 +48,9 @@ class UserController extends Controller
                 'driving_started_at',
                 'driver_license',
                 'tour_guide_license',
+                'contract_type',
+                'contract_start_date',
+                'contract_end_date',
                 'role',
                 'status',
                 'blacklist_reason',
@@ -325,6 +328,9 @@ class UserController extends Controller
             'driving_started_at' => ['nullable', 'date', 'before_or_equal:today'],
             'driver_license' => ['nullable', 'string', 'max:120'],
             'tour_guide_license' => ['nullable', 'string', 'max:120'],
+            'contract_type' => ['nullable', Rule::in(['Long Term', 'Short Term', 'Freelance'])],
+            'contract_start_date' => ['nullable', 'date'],
+            'contract_end_date' => ['nullable', 'date', 'after_or_equal:contract_start_date'],
             'role' => ['nullable', 'string', Rule::in($this->availableRoles())],
             'roles' => ['nullable', 'array', 'min:1'],
             'roles.*' => ['string', Rule::in($this->availableRoles())],
@@ -357,6 +363,9 @@ class UserController extends Controller
                 'driving_started_at' => $driverProfile['driving_started_at'],
                 'driver_license' => $driverProfile['driver_license'],
                 'tour_guide_license' => $driverProfile['tour_guide_license'],
+                'contract_type' => $driverProfile['contract_type'],
+                'contract_start_date' => $driverProfile['contract_start_date'],
+                'contract_end_date' => $driverProfile['contract_end_date'],
                 'role' => $primaryRole,
                 'status' => $validated['status'],
                 'blacklist_reason' => in_array($validated['status'], ['Inactive', 'Blacklisted'], true)
@@ -419,6 +428,9 @@ class UserController extends Controller
             'driving_started_at' => ['nullable', 'date', 'before_or_equal:today'],
             'driver_license' => ['nullable', 'string', 'max:120'],
             'tour_guide_license' => ['nullable', 'string', 'max:120'],
+            'contract_type' => ['nullable', Rule::in(['Long Term', 'Short Term', 'Freelance'])],
+            'contract_start_date' => ['nullable', 'date'],
+            'contract_end_date' => ['nullable', 'date', 'after_or_equal:contract_start_date'],
             'role' => ['nullable', 'string', Rule::in($this->availableRoles())],
             'roles' => ['nullable', 'array', 'min:1'],
             'roles.*' => ['string', Rule::in($this->availableRoles())],
@@ -431,6 +443,9 @@ class UserController extends Controller
         $primaryRole = $roles[0] ?? $user->role;
         $this->validateStatusReasonFields($validated, $primaryRole);
         $driverProfile = $this->extractDriverProfileFields($validated, $primaryRole, false, $user);
+        $contractDatesChanged = $user->contract_type !== $driverProfile['contract_type']
+            || optional($user->contract_start_date)->toDateString() !== $driverProfile['contract_start_date']
+            || optional($user->contract_end_date)->toDateString() !== $driverProfile['contract_end_date'];
         $user->update([
             'name' => $validated['name'],
             'email' => $validated['email'],
@@ -444,6 +459,10 @@ class UserController extends Controller
             'driving_started_at' => $driverProfile['driving_started_at'],
             'driver_license' => $driverProfile['driver_license'],
             'tour_guide_license' => $driverProfile['tour_guide_license'],
+            'contract_type' => $driverProfile['contract_type'],
+            'contract_start_date' => $driverProfile['contract_start_date'],
+            'contract_end_date' => $driverProfile['contract_end_date'],
+            'contract_expiry_notified_at' => $contractDatesChanged ? null : $user->contract_expiry_notified_at,
             'role' => $primaryRole,
             'status' => $validated['status'],
             'blacklist_reason' => in_array($validated['status'], ['Inactive', 'Blacklisted'], true)
@@ -708,6 +727,12 @@ class UserController extends Controller
             'workExperience' => $experience,
             'driverLicense' => $user->driver_license,
             'tourGuideLicense' => $user->tour_guide_license,
+            'contract_type' => $user->contract_type,
+            'contractType' => $user->contract_type,
+            'contract_start_date' => $this->normalizeDateString($user->contract_start_date),
+            'contract_end_date' => $this->normalizeDateString($user->contract_end_date),
+            'contractStartDate' => $this->normalizeDateString($user->contract_start_date),
+            'contractEndDate' => $this->normalizeDateString($user->contract_end_date),
             'role' => $user->role ?? $roles->first(),
             'roles' => $roles,
             'status' => $user->status,
@@ -729,7 +754,7 @@ class UserController extends Controller
 
     /**
      * @param array<string, mixed> $validated
-    * @return array{languages_spoken: ?string, work_experience: null, driving_started_at: ?string, driver_license: ?string, tour_guide_license: ?string}
+     * @return array{languages_spoken: ?string, work_experience: null, driving_started_at: ?string, driver_license: ?string, tour_guide_license: ?string, contract_type: ?string, contract_start_date: ?string, contract_end_date: ?string}
      */
     private function extractDriverProfileFields(
         array $validated,
@@ -749,11 +774,23 @@ class UserController extends Controller
         $tourGuideLicense = array_key_exists('tour_guide_license', $validated)
             ? trim((string) ($validated['tour_guide_license'] ?? ''))
             : ($user?->tour_guide_license ?? null);
+        $contractType = array_key_exists('contract_type', $validated)
+            ? trim((string) ($validated['contract_type'] ?? ''))
+            : ($user?->contract_type ?? null);
+        $contractStartDate = array_key_exists('contract_start_date', $validated)
+            ? trim((string) ($validated['contract_start_date'] ?? ''))
+            : $this->normalizeDateString($user?->contract_start_date);
+        $contractEndDate = array_key_exists('contract_end_date', $validated)
+            ? trim((string) ($validated['contract_end_date'] ?? ''))
+            : $this->normalizeDateString($user?->contract_end_date);
 
         $languages = $languages === '' ? null : $languages;
         $drivingStartedAt = $drivingStartedAt === '' ? null : $drivingStartedAt;
         $driverLicense = $driverLicense === '' ? null : $driverLicense;
         $tourGuideLicense = $tourGuideLicense === '' ? null : $tourGuideLicense;
+        $contractType = $contractType === '' ? null : $contractType;
+        $contractStartDate = $contractStartDate === '' ? null : $contractStartDate;
+        $contractEndDate = $contractEndDate === '' ? null : $contractEndDate;
 
         if ($role === 'Driver') {
             if ($required && ($languages === null || $drivingStartedAt === null)) {
@@ -763,12 +800,22 @@ class UserController extends Controller
                 ]);
             }
 
+            if ($contractType === 'Short Term' && ($contractStartDate === null || $contractEndDate === null)) {
+                throw ValidationException::withMessages([
+                    'contract_start_date' => ['Contract From and Contract To dates are required for Short Term drivers.'],
+                    'contract_end_date' => ['Contract From and Contract To dates are required for Short Term drivers.'],
+                ]);
+            }
+
             return [
                 'languages_spoken' => $languages,
                 'work_experience' => null,
                 'driving_started_at' => $drivingStartedAt,
                 'driver_license' => $driverLicense,
                 'tour_guide_license' => $tourGuideLicense,
+                'contract_type' => $contractType,
+                'contract_start_date' => $contractType === 'Short Term' ? $contractStartDate : null,
+                'contract_end_date' => $contractType === 'Short Term' ? $contractEndDate : null,
             ];
         }
 
@@ -778,6 +825,9 @@ class UserController extends Controller
             'driving_started_at' => null,
             'driver_license' => null,
             'tour_guide_license' => null,
+            'contract_type' => null,
+            'contract_start_date' => null,
+            'contract_end_date' => null,
         ];
     }
 
@@ -814,6 +864,9 @@ class UserController extends Controller
             'experience' => $this->calculateExperienceFromStartDate($drivingStartedAt) ?? '-',
             'driverLicense' => $user->driver_license ?: '-',
             'tourGuideLicense' => $user->tour_guide_license ?: '-',
+            'contractType' => $user->contract_type ?: '-',
+            'contractStartDate' => $this->normalizeDateString($user->contract_start_date) ?: '-',
+            'contractEndDate' => $this->normalizeDateString($user->contract_end_date) ?: '-',
             'generatedAt' => now()->format('d M Y H:i'),
         ];
     }

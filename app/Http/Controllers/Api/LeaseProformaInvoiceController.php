@@ -211,7 +211,7 @@ class LeaseProformaInvoiceController extends Controller
 
     private function validatePayload(Request $request): array
     {
-        return $request->validate([
+        $validated = $request->validate([
             'leaseContractId' => ['required', 'integer', 'exists:lease_contracts,id'],
             'clientName'      => ['required', 'string', 'max:150'],
             'currency'        => ['nullable', Rule::in(['USD', 'TSh'])],
@@ -229,6 +229,15 @@ class LeaseProformaInvoiceController extends Controller
             'total'           => ['required', 'numeric', 'min:0'],
             'status'          => ['nullable', Rule::in(self::STATUSES)],
         ]);
+
+        $contract = LeaseContract::query()->find($validated['leaseContractId']);
+        if ($contract === null || $contract->is_parent_company) {
+            throw ValidationException::withMessages([
+                'leaseContractId' => 'Choose a child lease contract; parent companies cannot have proforma invoices.',
+            ]);
+        }
+
+        return $validated;
     }
 
     private function generateNumber(): string

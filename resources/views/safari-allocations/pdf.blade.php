@@ -228,16 +228,16 @@
                 <thead>
                     <tr>
                         <th style="width: 8%;">Booking Ref</th>
-                        <th style="width: 12%;">Client</th>
+                        <th style="width: 11%;">Client</th>
                         <th style="width: 10%;">Group Name</th>
-                        <th style="width: 8%;">PI</th>
-                        <th style="width: 15%;">Route / Parks</th>
-                        <th style="width: 9%;">Vehicle</th>
+                        <th style="width: 10%;">Vehicle</th>
                         <th style="width: 11%;">Driver</th>
-                        <th style="width: 8%;">Start Date</th>
-                        <th style="width: 8%;">End Date</th>
+                        <th style="width: 10%;">Driving Licence</th>
+                        <th style="width: 10%;">Guide Licence</th>
+                        <th style="width: 9%;">Start Date</th>
+                        <th style="width: 9%;">End Date</th>
                         <th style="width: 5%;">Days</th>
-                        <th style="width: 6%;">Status</th>
+                        <th style="width: 7%;">Status</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -246,7 +246,6 @@
                             $lead = is_array($row['lead'] ?? null) ? $row['lead'] : [];
                             $vehicle = is_array($row['vehicle'] ?? null) ? $row['vehicle'] : [];
                             $driver = is_array($row['driver'] ?? null) ? $row['driver'] : [];
-                            $proforma = is_array($row['proformaInvoice'] ?? null) ? $row['proformaInvoice'] : [];
                             $startDate = (string) ($row['exportStartDate'] ?? ($row['startDate'] ?? ''));
                             $endDate = (string) ($row['exportEndDate'] ?? ($row['endDate'] ?? ''));
                             $displayStartDate =
@@ -259,10 +258,10 @@
                             <td>{{ $lead['bookingRef'] ?? '-' }}</td>
                             <td>{{ $lead['clientCompany'] ?? '-' }}</td>
                             <td>{{ $lead['groupName'] ?? '' }}</td>
-                            <td>{{ $proforma['piNo'] ?? '-' }}</td>
-                            <td>{{ $lead['routeParks'] ?? '-' }}</td>
                             <td>{{ $vehicle['vehicleNo'] ?? '-' }}</td>
                             <td>{{ $driver['name'] ?? '' }}</td>
+                            <td>{{ ($driver['driverLicense'] ?? null) ?: '-' }}</td>
+                            <td>{{ ($driver['guideLicense'] ?? null) ?: '-' }}</td>
                             <td>{{ $displayStartDate }}</td>
                             <td>{{ $displayEndDate }}</td>
                             <td>{{ $utilizedDays }}</td>

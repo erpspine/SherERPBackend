@@ -33,7 +33,7 @@ class JobCardController extends Controller
         $query = JobCard::query()
             ->with(['lead', 'vehicle', 'leaseContract', 'leaseAllocation.vehicle', 'leaseAllocation.driver', 'leaseAllocation.leaseContract'])
             ->withCount('perDiemVouchers')
-            ->withCount(['safariAllocations as assigned_driver_count' => fn ($query) => $query->whereNotNull('driver_id')])
+            ->withCount(['safariAllocations as assigned_driver_count' => fn($query) => $query->whereNotNull('driver_id')])
             ->withMax('perDiemVouchers', 'updated_at')
             ->latest('id');
 
@@ -73,10 +73,23 @@ class JobCardController extends Controller
         $validated = $request->validate($this->rules($request));
 
         $type = $validated['type'];
+        if ($this->isStatusManagedJobCardType($type) && ($validated['status'] ?? 'Open') !== 'Open') {
+            abort(403, 'Safari and Lease job cards must be opened or closed through the authorized status action.');
+        }
+
         if ($this->isSafariType($type) && empty($validated['leadId'])) {
             return response()->json([
                 'message' => 'leadId is required for Safari job cards.',
             ], 422);
+        }
+
+        if ($this->isSafariType($type) && ! empty($validated['leadId'])) {
+            $duplicate = $this->findDuplicateSafariLeadJobCard((int) $validated['leadId']);
+            if ($duplicate !== null) {
+                return response()->json([
+                    'message' => 'A Safari job card already exists for this lead (' . ($duplicate->job_card_no ?: ('ID ' . $duplicate->id)) . '). Update the existing job card instead of creating another one.',
+                ], 422);
+            }
         }
 
         if ($this->isLeaseType($type) && empty($validated['leaseAllocationId'])) {
@@ -114,9 +127,21 @@ class JobCardController extends Controller
     {
         $this->authorize('update', $jobCard);
 
+        if ($this->isStatusManagedJobCardType($jobCard->type) && $jobCard->status === 'Closed') {
+            abort(403, 'Closed Safari and Lease job cards cannot be edited. Reopen the job card first.');
+        }
+
         $validated = $request->validate($this->rules($request, isUpdate: true, jobCard: $jobCard));
 
         $type = $validated['type'] ?? $jobCard->type;
+        if (
+            ($this->isStatusManagedJobCardType($jobCard->type) || $this->isStatusManagedJobCardType($type)) &&
+            ((array_key_exists('status', $validated) && $validated['status'] !== $jobCard->status) ||
+                ($this->isStatusManagedJobCardType($type) && ! $this->isStatusManagedJobCardType($jobCard->type) && ($validated['status'] ?? $jobCard->status) === 'Closed'))
+        ) {
+            abort(403, 'Use the dedicated job card status action to open or close Safari and Lease job cards.');
+        }
+
         $leadId = array_key_exists('leadId', $validated) ? $validated['leadId'] : $jobCard->lead_id;
         $vehicleId = array_key_exists('vehicleId', $validated) ? $validated['vehicleId'] : $jobCard->vehicle_id;
         $leaseContractId = array_key_exists('leaseContractId', $validated) ? $validated['leaseContractId'] : $jobCard->lease_contract_id;
@@ -126,6 +151,15 @@ class JobCardController extends Controller
             return response()->json([
                 'message' => 'leadId is required for Safari job cards.',
             ], 422);
+        }
+
+        if ($this->isSafariType($type) && ! empty($leadId)) {
+            $duplicate = $this->findDuplicateSafariLeadJobCard((int) $leadId, (int) $jobCard->id);
+            if ($duplicate !== null) {
+                return response()->json([
+                    'message' => 'A Safari job card already exists for this lead (' . ($duplicate->job_card_no ?: ('ID ' . $duplicate->id)) . '). Update the existing job card instead of creating another one.',
+                ], 422);
+            }
         }
 
         if ($this->isLeaseType($type) && empty($leaseAllocationId)) {
@@ -154,6 +188,32 @@ class JobCardController extends Controller
 
         return response()->json([
             'message' => 'Job card updated successfully.',
+            'jobCard' => $this->transform($jobCard),
+        ]);
+    }
+
+    public function updateStatus(Request $request, JobCard $jobCard): JsonResponse
+    {
+        $allowedEmails = ['arif@sher.co.tz', 'tanveer@sher.co.tz'];
+        abort_unless(in_array(strtolower(trim((string) $request->user()?->email)), $allowedEmails, true), 403);
+        abort_unless($this->isStatusManagedJobCardType($jobCard->type), 422, 'Only Safari and Long Term Lease job cards can be opened or closed here.');
+
+        $validated = $request->validate([
+            'status' => ['required', Rule::in(self::STATUSES)],
+            'safariEndDate' => ['required_if:status,Closed', 'nullable', 'date'],
+            'timeIn' => ['required_if:status,Closed', 'nullable', 'date_format:H:i'],
+        ]);
+
+        $jobCard->status = $validated['status'];
+        if ($validated['status'] === 'Closed') {
+            $jobCard->safari_end_date = $validated['safariEndDate'];
+            $jobCard->time_in = $validated['timeIn'];
+        }
+        $jobCard->save();
+        $jobCard->load(['lead', 'vehicle', 'leaseContract', 'leaseAllocation.vehicle', 'leaseAllocation.driver', 'leaseAllocation.leaseContract']);
+
+        return response()->json([
+            'message' => 'Job card status updated successfully.',
             'jobCard' => $this->transform($jobCard),
         ]);
     }
@@ -203,7 +263,7 @@ class JobCardController extends Controller
         $jobCard->load(['lead', 'vehicle', 'leaseContract', 'leaseAllocation.driver', 'leaseAllocation.vehicle']);
         $data = $this->transformWithDriverProfiles($jobCard);
         $driver = collect($data['driverProfiles'])->first(function ($profile) use ($validated) {
-            $key = $profile['id'] ? (string) $profile['id'] : 'manual-'.hash('sha256', trim($profile['name']));
+            $key = $profile['id'] ? (string) $profile['id'] : 'manual-' . hash('sha256', trim($profile['name']));
             return $key === $validated['driverKey'] && trim($profile['name']) !== '';
         });
         abort_unless($driver, 422, 'Select a driver assigned to this job card.');
@@ -212,7 +272,7 @@ class JobCardController extends Controller
         }
 
         $allocatedVehicle = collect($data['allocatedVehicles'] ?? [])
-            ->first(fn (array $allocation): bool => (int) ($allocation['driverProfile']['id'] ?? 0) === (int) ($driver['id'] ?? 0));
+            ->first(fn(array $allocation): bool => (int) ($allocation['driverProfile']['id'] ?? 0) === (int) ($driver['id'] ?? 0));
         $vehiclePlateNo = $allocatedVehicle['plateNo']
             ?? ($jobCard->leaseAllocation?->vehicle?->plate_no ?? $jobCard->vehicle?->plate_no ?? '');
         $clientName = $data['tourOperatorClientName']
@@ -228,28 +288,37 @@ class JobCardController extends Controller
                 ->first();
             $items = $data['routeItinerary'];
             abort_if(empty($items), 422, 'Add itinerary lines and daily allowances to the job card first.');
+            $driverContractType = trim((string) ($driver['contractType'] ?? ''));
+            $contractAllowances = is_array($jobCard->driver_allowances) ? $jobCard->driver_allowances : [];
+            $contractAllowance = $driverContractType !== '' ? ($contractAllowances[$driverContractType] ?? null) : null;
             $totalCents = 0;
             foreach ($items as &$item) {
-                abort_if($item['allowancePerDay'] === null || $item['allowancePerDay'] < 0, 422,
-                    'Enter a non-negative allowance for every itinerary line before generating the voucher.');
+                if ($contractAllowance !== null && is_numeric($contractAllowance)) {
+                    $item['allowancePerDay'] = (float) $contractAllowance;
+                }
+                abort_if(
+                    $item['allowancePerDay'] === null || $item['allowancePerDay'] < 0,
+                    422,
+                    'Enter a non-negative allowance for every itinerary line before generating the voucher.'
+                );
                 $cents = (int) round($item['allowancePerDay'] * 100);
                 $item['allowancePerDay'] = $cents / 100;
                 $totalCents += $cents;
             }
             unset($item);
             $snapshot = [
-                    'jobCardNo' => $data['jobCardNo'],
-                    'createdAt' => $jobCard->created_at?->format('d M Y'),
-                    'driverName' => $driver['name'],
-                    'vehiclePlateNo' => $vehiclePlateNo,
-                    'clientName' => $clientName,
-                    'groupName' => $data['groupName'],
-                    'safariStartDate' => $jobCard->safari_start_date?->format('d M Y'),
-                    'safariEndDate' => $jobCard->safari_end_date?->format('d M Y'),
-                    'items' => $items,
-                    'total' => $totalCents / 100,
-                    'preparedBy' => $request->user()->name,
-                ];
+                'jobCardNo' => $data['jobCardNo'],
+                'createdAt' => $jobCard->created_at?->format('d M Y'),
+                'driverName' => $driver['name'],
+                'vehiclePlateNo' => $vehiclePlateNo,
+                'clientName' => $clientName,
+                'groupName' => $data['groupName'],
+                'safariStartDate' => $jobCard->safari_start_date?->format('d M Y'),
+                'safariEndDate' => $jobCard->safari_end_date?->format('d M Y'),
+                'items' => $items,
+                'total' => $totalCents / 100,
+                'preparedBy' => $request->user()->name,
+            ];
 
             if ($existing) {
                 $existing->update(['snapshot' => $snapshot]);
@@ -275,10 +344,12 @@ class JobCardController extends Controller
         }
         if ($request->user()->hasRole('Driver')) {
             $query->where('driver_key', (string) $request->user()->id)
-                ->whereHas('jobCard', fn ($q) => $q->whereIn('lead_id',
-                    SafariAllocation::where('driver_id', $request->user()->id)->select('lead_id')));
+                ->whereHas('jobCard', fn($q) => $q->whereIn(
+                    'lead_id',
+                    SafariAllocation::where('driver_id', $request->user()->id)->select('lead_id')
+                ));
         }
-        return response()->json(['perDiems' => $query->get()->map(fn ($voucher) => [
+        return response()->json(['perDiems' => $query->get()->map(fn($voucher) => [
             'id' => $voucher->id,
             'number' => $voucher->number(),
             'jobCardId' => $voucher->job_card_id,
@@ -340,7 +411,7 @@ class JobCardController extends Controller
                 'email' => Setting::get('company_email'),
             ],
             'logoDataUri' => $this->resolveLogoDataUri(),
-        ])->setPaper('a5', 'portrait')->download($number.'.pdf');
+        ])->setPaper('a5', 'portrait')->download($number . '.pdf');
     }
 
     private function driverGuideProfile($driver, $vehicle): array
@@ -352,6 +423,7 @@ class JobCardController extends Controller
             'languages' => $driver?->languages_spoken ?? '',
             'driverLicense' => $driver?->driver_license ?? '',
             'guideLicense' => $driver?->tour_guide_license ?? '',
+            'contractType' => $driver?->contract_type ?? '',
             'plateNo' => $vehicle?->plate_no ?? '',
         ];
     }
@@ -406,7 +478,7 @@ class JobCardController extends Controller
         }
 
         foreach ($result['driverProfiles'] as &$profile) {
-            $profile['key'] = $profile['id'] ? (string) $profile['id'] : 'manual-'.hash('sha256', trim($profile['name']));
+            $profile['key'] = $profile['id'] ? (string) $profile['id'] : 'manual-' . hash('sha256', trim($profile['name']));
         }
         unset($profile);
         return $result;
@@ -453,6 +525,13 @@ class JobCardController extends Controller
             'routeItinerary.*.date' => ['sometimes', 'nullable', 'string', 'max:100'],
             'routeItinerary.*.dayDescription' => ['sometimes', 'nullable', 'string', 'max:2000'],
             'routeItinerary.*.allowancePerDay' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'routePoints' => ['sometimes', 'nullable', 'array', 'max:100'],
+            'routePoints.*.lat' => ['required_with:routePoints', 'numeric', 'between:-90,90'],
+            'routePoints.*.lng' => ['required_with:routePoints', 'numeric', 'between:-180,180'],
+            'routePoints.*.label' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'routeDistanceKm' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:99999999.9'],
+            'additionalDistanceKm' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:99999999.9'],
+            'additionalDistanceNote' => ['sometimes', 'nullable', 'string', 'max:500'],
             'additionalDetails' => ['sometimes', 'nullable', 'string'],
             'numberOfDays' => ['sometimes', 'nullable', 'integer', 'min:1', 'max:365'],
             'pickupLocation' => ['sometimes', 'nullable', 'string', 'max:255'],
@@ -477,6 +556,8 @@ class JobCardController extends Controller
             'approximateFuelUsed' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'driverDetails' => ['sometimes', 'nullable', 'string', 'max:255'],
             'driverAllowance' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'driverAllowances' => ['sometimes', 'nullable', 'array'],
+            'driverAllowances.*' => ['nullable', 'numeric', 'min:0'],
         ];
     }
 
@@ -498,6 +579,10 @@ class JobCardController extends Controller
             'time_out' => array_key_exists('timeOut', $validated) ? $validated['timeOut'] : ($jobCard?->time_out ? date('H:i', strtotime((string) $jobCard->time_out)) : null),
             'time_in' => array_key_exists('timeIn', $validated) ? $validated['timeIn'] : ($jobCard?->time_in ? date('H:i', strtotime((string) $jobCard->time_in)) : null),
             'route_summary' => array_key_exists('routeSummary', $validated) ? $validated['routeSummary'] : $jobCard?->route_summary,
+            'route_points' => array_key_exists('routePoints', $validated) ? $validated['routePoints'] : $jobCard?->route_points,
+            'route_distance_km' => array_key_exists('routeDistanceKm', $validated) ? $validated['routeDistanceKm'] : $jobCard?->route_distance_km,
+            'additional_distance_km' => array_key_exists('additionalDistanceKm', $validated) ? $validated['additionalDistanceKm'] : $jobCard?->additional_distance_km,
+            'additional_distance_note' => array_key_exists('additionalDistanceNote', $validated) ? $validated['additionalDistanceNote'] : $jobCard?->additional_distance_note,
             'additional_details' => array_key_exists('additionalDetails', $validated) ? $validated['additionalDetails'] : $jobCard?->additional_details,
             'number_of_days' => array_key_exists('numberOfDays', $validated) ? $validated['numberOfDays'] : $jobCard?->number_of_days,
             'pickup_location' => array_key_exists('pickupLocation', $validated) ? $validated['pickupLocation'] : $jobCard?->pickup_location,
@@ -522,6 +607,7 @@ class JobCardController extends Controller
             'approximate_fuel_used' => array_key_exists('approximateFuelUsed', $validated) ? $validated['approximateFuelUsed'] : $jobCard?->approximate_fuel_used,
             'driver_details' => array_key_exists('driverDetails', $validated) ? $validated['driverDetails'] : $jobCard?->driver_details,
             'driver_allowance' => array_key_exists('driverAllowance', $validated) ? $validated['driverAllowance'] : $jobCard?->driver_allowance,
+            'driver_allowances' => array_key_exists('driverAllowances', $validated) ? $validated['driverAllowances'] : $jobCard?->driver_allowances,
             'route_itinerary' => $jobCard?->route_itinerary,
             'guide_language' => $jobCard?->guide_language,
         ];
@@ -668,6 +754,11 @@ class JobCardController extends Controller
         return is_string($type) && strtolower(trim($type)) === 'long term lease';
     }
 
+    private function isStatusManagedJobCardType(?string $type): bool
+    {
+        return $this->isSafariType($type) || $this->isLeaseType($type);
+    }
+
     private function findDuplicateLeaseAllocationJobCard(int $leaseAllocationId, ?int $ignoreJobCardId = null): ?JobCard
     {
         $query = JobCard::query()
@@ -679,6 +770,19 @@ class JobCardController extends Controller
         }
 
         return $query->first();
+    }
+
+    private function findDuplicateSafariLeadJobCard(int $leadId, ?int $ignoreJobCardId = null): ?JobCard
+    {
+        $query = JobCard::query()
+            ->where('lead_id', $leadId)
+            ->whereRaw('LOWER(TRIM(type)) LIKE ?', ['safari%']);
+
+        if ($ignoreJobCardId !== null) {
+            $query->where('id', '!=', $ignoreJobCardId);
+        }
+
+        return $query->orderBy('id')->first();
     }
 
     /**
@@ -709,6 +813,10 @@ class JobCardController extends Controller
             'timeOut' => $timeOut,
             'timeIn' => $timeIn,
             'routeSummary' => $jobCard->route_summary,
+            'routePoints' => $jobCard->route_points ?? [],
+            'routeDistanceKm' => $jobCard->route_distance_km !== null ? (float) $jobCard->route_distance_km : null,
+            'additionalDistanceKm' => $jobCard->additional_distance_km !== null ? (float) $jobCard->additional_distance_km : null,
+            'additionalDistanceNote' => $jobCard->additional_distance_note,
             'additionalDetails' => $jobCard->additional_details,
             'numberOfDays' => $jobCard->number_of_days,
             'pickupLocation' => $jobCard->pickup_location,
@@ -733,6 +841,7 @@ class JobCardController extends Controller
             'approximateFuelUsed' => $jobCard->approximate_fuel_used !== null ? (float) $jobCard->approximate_fuel_used : null,
             'driverDetails' => $jobCard->driver_details,
             'driverAllowance' => $jobCard->driver_allowance !== null ? (float) $jobCard->driver_allowance : null,
+            'driverAllowances' => is_array($jobCard->driver_allowances) ? $jobCard->driver_allowances : [],
             'perDiemCount' => (int) ($jobCard->per_diem_vouchers_count ?? 0),
             'assignedDriverCount' => (int) ($jobCard->assigned_driver_count ?? 0),
             'perDiemUpdatedAt' => $jobCard->per_diem_vouchers_max_updated_at

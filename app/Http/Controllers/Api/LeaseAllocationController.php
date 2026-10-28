@@ -10,6 +10,7 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -409,7 +410,12 @@ class LeaseAllocationController extends Controller
 
     public function destroy(LeaseAllocation $leaseAllocation): JsonResponse
     {
-        $leaseAllocation->delete();
+        DB::transaction(function () use ($leaseAllocation): void {
+            // Fuel entries intentionally use RESTRICT to prevent accidental orphaning.
+            // Remove the allocation's dependent entry first, then delete the allocation.
+            $leaseAllocation->safariFuelEntry()->delete();
+            $leaseAllocation->delete();
+        });
 
         return response()->json([
             'message' => 'Lease allocation deleted successfully.',
@@ -427,7 +433,7 @@ class LeaseAllocationController extends Controller
             'endDate' => ['required', 'date_format:Y-m-d', 'after_or_equal:startDate'],
             'itinerary' => ['nullable', 'string', 'max:5000'],
             'itineraryItems' => ['nullable', 'array'],
-            'itineraryItems.*.date' => ['nullable', 'string', 'max:100'],
+            'itineraryItems.*.date' => ['nullable', 'date_format:Y-m-d'],
             'itineraryItems.*.details' => ['nullable', 'string', 'max:2000'],
             'fuelNotes' => ['nullable', 'string', 'max:2000'],
             'status' => ['nullable', Rule::in(self::STATUSES)],
@@ -441,6 +447,11 @@ class LeaseAllocationController extends Controller
         if ($contract === null) {
             throw ValidationException::withMessages([
                 'leaseContractId' => 'Lease contract not found.',
+            ]);
+        }
+        if ($contract->is_parent_company) {
+            throw ValidationException::withMessages([
+                'leaseContractId' => 'Choose a child lease contract; parent companies do not hold vehicles or allocations.',
             ]);
         }
         $contractVehicleIds = $contract->vehicles->pluck('id')->all();
@@ -462,6 +473,19 @@ class LeaseAllocationController extends Controller
             throw ValidationException::withMessages([
                 'endDate' => 'End date is after the lease contract end (' . $contractEnd . ').',
             ]);
+        }
+
+        foreach ($validated['itineraryItems'] ?? [] as $index => $item) {
+            $itineraryDate = trim((string) ($item['date'] ?? ''));
+            if ($itineraryDate === '') {
+                continue;
+            }
+
+            if ($itineraryDate < $validated['startDate'] || $itineraryDate > $validated['endDate']) {
+                throw ValidationException::withMessages([
+                    "itineraryItems.{$index}.date" => 'Itinerary dates must fall within the allocation period.',
+                ]);
+            }
         }
 
         return $validated;

@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 #[Fillable([
     'lead_id',
     'user_id',
+    'request_date',
     'litres',
     'base_rate_per_km',
     'reason',
@@ -61,6 +62,7 @@ class FuelRequisition extends Model
     protected function casts(): array
     {
         return [
+            'request_date' => 'date:Y-m-d',
             'litres' => 'decimal:2',
             'base_rate_per_km' => 'decimal:4',
             'transport_itinerary' => 'array',

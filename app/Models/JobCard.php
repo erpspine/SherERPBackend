@@ -31,6 +31,10 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'number_of_days',
     'route_summary',
     'route_itinerary',
+    'route_points',
+    'route_distance_km',
+    'additional_distance_km',
+    'additional_distance_note',
     'pickup_location',
     'dropoff_location',
     'additional_details',
@@ -46,6 +50,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'approximate_fuel_used',
     'driver_details',
     'driver_allowance',
+    'driver_allowances',
 ])]
 class JobCard extends Model
 {
@@ -144,6 +149,10 @@ class JobCard extends Model
      */
     public static function ensureForLeaseContract(LeaseContract $contract): array
     {
+        if ($contract->is_parent_company) {
+            return ['jobCardsCreated' => 0, 'jobCardId' => 0];
+        }
+
         $jobCard = static::query()->firstOrNew([
             'lease_contract_id' => $contract->id,
             'type' => 'Long Term Lease',
@@ -201,7 +210,11 @@ class JobCard extends Model
             'fuel_gauge_in' => 'decimal:2',
             'approximate_fuel_used' => 'decimal:2',
             'driver_allowance' => 'decimal:2',
+            'driver_allowances' => 'array',
             'route_itinerary' => 'array',
+            'route_points' => 'array',
+            'route_distance_km' => 'decimal:1',
+            'additional_distance_km' => 'decimal:1',
             'safari_start_date' => 'date',
             'safari_end_date' => 'date',
             'time_out' => 'datetime:H:i:s',

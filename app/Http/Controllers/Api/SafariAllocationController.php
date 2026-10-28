@@ -246,13 +246,24 @@ class SafariAllocationController extends Controller
     {
         $this->authorize('viewAny', SafariAllocation::class);
 
+        // Dompdf needs more than the default 128 MB to render the full allocation table.
+        ini_set('memory_limit', '384M');
+
         $dateFrom        = trim((string) $request->input('dateFrom', ''));
         $dateTo          = trim((string) $request->input('dateTo', ''));
         $clipOverlapDates = $request->boolean('clipOverlapDates');
 
         $rows = $this->filteredExportQuery($request)
             ->get()
-            ->map(fn(SafariAllocation $a): array => $this->transform($a))
+            ->map(function (SafariAllocation $allocation): array {
+                $row = $this->transform($allocation);
+                if ($allocation->driver) {
+                    $row['driver']['driverLicense'] = $allocation->driver->driver_license;
+                    $row['driver']['guideLicense'] = $allocation->driver->tour_guide_license;
+                }
+
+                return $row;
+            })
             ->map(fn(array $row): array => $this->buildExportRow($row, $dateFrom, $dateTo, $clipOverlapDates))
             ->values();
 
@@ -516,6 +527,7 @@ class SafariAllocationController extends Controller
             'driver' => $allocation->driver ? [
                 'id' => $allocation->driver->id,
                 'name' => $allocation->driver->name,
+                'phone' => $allocation->driver->phone,
             ] : null,
             // Number of odometer log entries already recorded for this trip.
             // Surfaces in the driver app's trip list as "X odometer entries

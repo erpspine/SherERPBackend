@@ -34,6 +34,72 @@ class FuelManagementController extends Controller
         return response()->json(['message' => 'Monthly deduction price saved.', 'prices' => $this->monthlyPrices(), 'target_averages' => $this->monthlyTargets()]);
     }
 
+    public function saveMonthlyDeduction(Request $request)
+    {
+        abort_unless($request->user()->can('odometer-logs.update'), 403);
+
+        $data = $request->validate([
+            'month' => ['required', 'date_format:Y-m'],
+            'vehicle_id' => ['required', 'integer', 'exists:vehicles,id'],
+            'deduction_id' => ['sometimes', 'nullable', 'integer', 'min:1'],
+            'total_deduction' => ['required', 'numeric', 'min:0', 'max:100000000'],
+            'amount_deducted' => ['required', 'numeric', 'min:0', 'max:100000000'],
+            'waiver' => ['required', 'numeric', 'min:0', 'max:100000000'],
+            'notes' => ['nullable', 'string', 'max:2000'],
+        ]);
+
+        $key = 'fuel_monthly_deduction_' . $data['vehicle_id'] . '_' . $data['month'];
+        $stored = json_decode((string) Setting::get($key, '[]'), true);
+        $records = isset($stored['vehicle_id']) ? [$stored] : (is_array($stored) ? $stored : []);
+        $editingId = isset($data['deduction_id']) ? (int) $data['deduction_id'] : null;
+        $existing = collect($records)->first(fn ($record) => (int) ($record['id'] ?? 0) === $editingId);
+        $totalSettled = collect($records)->reject(fn ($record) => $editingId !== null && (int) ($record['id'] ?? 0) === $editingId)
+            ->sum(fn ($record) => (float) ($record['amount_deducted'] ?? 0) + (float) ($record['waiver'] ?? 0));
+        if ($totalSettled + (float) $data['amount_deducted'] + (float) $data['waiver'] > (float) $data['total_deduction']) {
+            throw ValidationException::withMessages([
+                'amount_deducted' => 'All deductions and waivers for this month cannot exceed the total deduction.',
+            ]);
+        }
+
+        $record = [
+            'id' => $editingId ?? (collect($records)->max(fn ($item) => (int) ($item['id'] ?? 0)) + 1),
+            'vehicle_id' => (int) $data['vehicle_id'],
+            'month' => $data['month'],
+            'total_deduction' => round((float) $data['total_deduction'], 2),
+            'amount_deducted' => round((float) $data['amount_deducted'], 2),
+            'waiver' => round((float) $data['waiver'], 2),
+            'notes' => trim((string) ($data['notes'] ?? '')),
+        ];
+        if ($existing) {
+            $records = collect($records)->map(fn ($item) => (int) ($item['id'] ?? 0) === $editingId ? $record : $item)->values()->all();
+        } else {
+            $records[] = $record;
+        }
+        Setting::set($key, json_encode(array_values($records)));
+
+        return response()->json([
+            'message' => 'Monthly deduction record saved.',
+            'deductions' => $this->monthlyDeductions(),
+        ]);
+    }
+
+    public function deleteMonthlyDeduction(Request $request, string $vehicleId, string $month, int $deductionId)
+    {
+        abort_unless($request->user()->can('odometer-logs.update'), 403);
+        abort_unless(preg_match('/^\d{4}-\d{2}$/', $month) === 1, 404);
+
+        $key = 'fuel_monthly_deduction_' . $vehicleId . '_' . $month;
+        $stored = json_decode((string) Setting::get($key, '[]'), true);
+        $records = isset($stored['vehicle_id']) ? [$stored] : (is_array($stored) ? $stored : []);
+        $remaining = collect($records)->reject(fn ($record) => (int) ($record['id'] ?? 0) === $deductionId)->values()->all();
+        abort_if(count($remaining) === count($records), 404, 'Deduction record not found.');
+
+        if ($remaining) Setting::set($key, json_encode($remaining));
+        else Setting::where('key', $key)->delete();
+
+        return response()->json(['message' => 'Monthly deduction deleted.', 'deductions' => $this->monthlyDeductions()]);
+    }
+
 
     private function monthlyTargets(): array
     {
@@ -48,6 +114,29 @@ class FuelManagementController extends Controller
             ->mapWithKeys(fn($setting) => [substr($setting->key, strlen('fuel_deduction_price_')) => (float) $setting->value])->all();
     }
 
+    private function monthlyDeductions(): array
+    {
+        $prefix = 'fuel_monthly_deduction_';
+
+        return Setting::where('key', 'like', $prefix . '%')->get()->mapWithKeys(function ($setting) use ($prefix) {
+            $stored = json_decode((string) $setting->value, true);
+            $records = isset($stored['vehicle_id']) ? [$stored] : (is_array($stored) ? $stored : []);
+            $records = collect($records)->filter(fn ($record) => is_array($record) && !empty($record['vehicle_id']) && !empty($record['month']))->values()->all();
+            if (!$records) return [];
+            return [$records[0]['vehicle_id'] . ':' . $records[0]['month'] => $records];
+        })->all();
+    }
+
+    private function monthlyDeductionTotals(): array
+    {
+        return collect($this->monthlyDeductions())->mapWithKeys(function (array $records, string $key) {
+            $total = (float) ($records[0]['total_deduction'] ?? 0);
+            $deducted = collect($records)->sum('amount_deducted');
+            $waiver = collect($records)->sum('waiver');
+            return [$key => ['total_deduction' => $total, 'amount_deducted' => $deducted, 'waiver' => $waiver, 'balance' => max(0, $total - $deducted - $waiver), 'notes' => collect($records)->pluck('notes')->filter()->implode(' | ')]];
+        })->all();
+    }
+
     public function exportPdf(Request $request)
     {
         $rows = collect($this->fuelRows($request)['entries']);
@@ -56,6 +145,7 @@ class FuelManagementController extends Controller
         $dateTo = trim((string) $request->input('dateTo', ''));
         $prices = $this->monthlyPrices();
         $targetAverages = $this->monthlyTargets();
+        $monthlyDeductions = $this->monthlyDeductionTotals();
         
 
         if ($isReport) {
@@ -75,7 +165,7 @@ class FuelManagementController extends Controller
                     && (!$request->filled('driverId') || (string) ($row['driver_id'] ?? '') === (string) $request->input('driverId'))
                     && (!$request->filled('search') || str_contains($text, strtolower((string) $request->input('search'))))
                     && (!$dateFrom || $date >= $dateFrom) && (!$dateTo || $date <= $dateTo);
-            })->groupBy(fn(array $row) => $row['vehicle_id'] . ':' . substr($row['filled_at'], 0, 7))->sortKeys()->map(function ($items) use ($prices, $targetAverages): array {
+            })->groupBy(fn(array $row) => $row['vehicle_id'] . ':' . substr($row['filled_at'], 0, 7))->sortKeys()->map(function ($items) use ($prices, $targetAverages, $monthlyDeductions): array {
                 $month = substr($items->first()['filled_at'], 0, 7);
                 $price = $prices[$month] ?? null;
                 $calculated = $items->filter(fn(array $row): bool => $row['vehicle_average'] !== null && $row['km_done'] !== null && $row['litres_consumed'] > 0);
@@ -87,6 +177,8 @@ class FuelManagementController extends Controller
                 $average = $litres > 0 ? $km / $litres : null;
                 $targetAverage = $targetAverages[$month] ?? null;
                 $status = $average === null ? 'Pending' : ($targetAverage === null ? 'Target not set' : ($average < $targetAverage ? 'Deduction' : ($average < 7 ? 'Warning' : 'Good')));
+                $settlement = $monthlyDeductions[$items->first()['vehicle_id'] . ':' . $month] ?? [];
+                $deduction = $status === 'Target not set' ? 'Target not set' : ($status === 'Deduction' ? ($price === null ? 'Price not set' : round($excess * $price, 2)) : 0);
                 return [
                     'vehicle' => $items->first()['vehicle'] ?? [],
                     'driver' => $items->map(fn(array $row) => $row['driver']['name'] ?? 'Unassigned')->unique()->implode(', '),
@@ -99,13 +191,17 @@ class FuelManagementController extends Controller
                     'average_km_per_trip' => $days > 0 && $calculated->count() ? round($km / $days, 2) : null,
                     'expected' => $calculated->count() ? round($expected, 2) : null,
                     'excess' => $calculated->count() ? round($excess, 2) : null,
-                    'deduction' => $status === 'Target not set' ? 'Target not set' : ($status === 'Deduction' ? ($price === null ? 'Price not set' : round($excess * $price, 2)) : 0),
+                    'deduction' => $deduction,
+                    'amount_deducted' => $settlement['amount_deducted'] ?? 0,
+                    'waiver' => $settlement['waiver'] ?? 0,
+                    'balance' => is_numeric($deduction) ? ($settlement['balance'] ?? $deduction) : null,
+                    'notes' => $settlement['notes'] ?? '',
                     'average' => $litres > 0 ? round($km / $litres, 2) : null,
                     'status' => $status,
                 ];
             })->values();
             $title = 'FUEL CONSUMPTION REPORT';
-            $columns = ['Vehicle', 'Driver', 'Month', 'Price/L', 'Trips', 'Total days', 'Consumed L', 'Total KM', 'Average KM per trip', 'Expected L', 'Excess L', 'Deduction', 'Actual average km/L', 'Status'];
+            $columns = ['Vehicle', 'Driver', 'Month', 'Price/L', 'Trips', 'Total days', 'Consumed L', 'Total KM', 'Average KM per trip', 'Expected L', 'Excess L', 'Deduction', 'Amount deducted', 'Waiver', 'Balance', 'Notes', 'Actual average km/L', 'Status'];
             $totalDays = $groups->every(fn(array $row): bool => $row['days'] !== null) ? $groups->sum('days') : null;
             $totalLitres = (float) $groups->sum(fn(array $row): float => (float) ($row['litres'] ?? 0));
             $totalKm = (float) $groups->sum(fn(array $row): float => (float) ($row['km'] ?? 0));
@@ -204,6 +300,7 @@ class FuelManagementController extends Controller
         return [
             'monthly_prices' => $this->monthlyPrices(),
             'target_averages' => $this->monthlyTargets(),
+            'monthly_deductions' => $this->monthlyDeductions(),
             'can_manage_prices' => $request->user()->can('odometer-logs.update'),
             'allocations' => $allocations,
             'entries' => array_reverse($rows),

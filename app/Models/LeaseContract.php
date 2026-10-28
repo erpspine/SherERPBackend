@@ -9,6 +9,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 #[Fillable([
     'client_name',
+    'parent_client_name',
+    'is_parent_company',
     'group_name',
     'lease_type',
     'start_date',
@@ -36,6 +38,7 @@ class LeaseContract extends Model
     protected function casts(): array
     {
         return [
+            'is_parent_company' => 'boolean',
             'start_date' => 'date',
             'end_date' => 'date',
             'duration_days' => 'integer',

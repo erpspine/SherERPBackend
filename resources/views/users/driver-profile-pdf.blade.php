@@ -124,6 +124,18 @@
                 <th>Tour Guide Licence</th>
                 <td>{{ $driver['tourGuideLicense'] ?: '-' }}</td>
             </tr>
+            <tr>
+                <th>Contract Type</th>
+                <td>{{ $driver['contractType'] ?: '-' }}</td>
+            </tr>
+            <tr>
+                <th>Contract From</th>
+                <td>{{ $driver['contractStartDate'] ?: '-' }}</td>
+            </tr>
+            <tr>
+                <th>Contract To</th>
+                <td>{{ $driver['contractEndDate'] ?: '-' }}</td>
+            </tr>
         </table>
     </div>
 

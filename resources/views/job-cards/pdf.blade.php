@@ -57,6 +57,21 @@
             pointer-events: none;
         }
 
+        .paid-watermark {
+            position: absolute;
+            z-index: 5;
+            top: 42%;
+            left: 50%;
+            width: 100%;
+            color: rgba(180, 25, 35, 0.16);
+            font-size: 104px;
+            font-weight: 800;
+            letter-spacing: 8px;
+            text-align: center;
+            transform: translate(-50%, -50%) rotate(-28deg);
+            pointer-events: none;
+        }
+
         .content {
             padding: 14px;
             position: relative;
@@ -218,6 +233,7 @@
         $type = $jobCard['type'] ?? 'Safari';
         $isSafari = is_string($type) && str_starts_with(strtolower($type), 'safari');
         $isLease = is_string($type) && str_contains(strtolower($type), 'lease');
+        $isClosed = strtolower(trim((string) ($jobCard['status'] ?? ''))) === 'closed';
         $formatDisplayDate = function ($value) {
             if (empty($value)) {
                 return '-';
@@ -272,6 +288,12 @@
         };
 
         $allocatedVehicles = is_array($jobCard['allocatedVehicles'] ?? null) ? $jobCard['allocatedVehicles'] : [];
+        $mapDistanceKm = is_numeric($jobCard['routeDistanceKm'] ?? null) ? (float) $jobCard['routeDistanceKm'] : 0;
+        $additionalDistanceKm = is_numeric($jobCard['additionalDistanceKm'] ?? null)
+            ? (float) $jobCard['additionalDistanceKm']
+            : 0;
+        $totalEstimatedDistanceKm = $mapDistanceKm + $additionalDistanceKm;
+        $fuelAllowanceLitres = $totalEstimatedDistanceKm > 0 ? $totalEstimatedDistanceKm / 6.5 : null;
     @endphp
 
     @php
@@ -284,6 +306,9 @@
         <div class="sheet" @if (!$isLastPage) style="page-break-after:always;margin-bottom:20px;" @endif>
             <div class="top-band"></div>
             <div class="watermark"></div>
+            @if ($isClosed)
+                <div class="paid-watermark">PAID</div>
+            @endif
 
             <div class="content">
                 <table class="header">
@@ -371,7 +396,7 @@
                 </table>
 
                 <div class="section-title">Driver/Guide Details</div>
-                @foreach ($currentCar !== null ? [$currentCar['driverProfile'] ?? []] : ($jobCard['driverProfiles'] ?? []) as $profile)
+                @foreach ($currentCar !== null ? [$currentCar['driverProfile'] ?? []] : $jobCard['driverProfiles'] ?? [] as $profile)
                     <table class="grid" style="margin-bottom:8px;page-break-inside:avoid;">
                         <tr>
                             <td><span class="label">Name:</span> {{ $profile['name'] ?: '-' }}</td>
@@ -383,7 +408,12 @@
                         </tr>
                         <tr>
                             <td><span class="label">Driver Licence:</span> {{ $profile['driverLicense'] ?: '-' }}</td>
-                            <td><span class="label">Tour Guide Licence:</span> {{ $profile['guideLicense'] ?: '-' }}</td>
+                            <td><span class="label">Tour Guide Licence:</span> {{ $profile['guideLicense'] ?: '-' }}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td colspan="2"><span class="label">Contract Type:</span>
+                                {{ $profile['contractType'] ?: '-' }}</td>
                         </tr>
                     </table>
                 @endforeach
@@ -391,7 +421,22 @@
                 @if ($isSafari || $isLease)
                     @php
                         $itineraryDays = $jobCard['routeItinerary'] ?? [];
+                        $driverAllowances = is_array($jobCard['driverAllowances'] ?? null)
+                            ? $jobCard['driverAllowances']
+                            : [];
+                        $currentProfile = $currentCar['driverProfile'] ?? ($jobCard['driverProfiles'][0] ?? []);
+                        $currentContractType = trim((string) ($currentProfile['contractType'] ?? ''));
                         $driverAllowanceValue = $jobCard['driverAllowance'] ?? null;
+                        if ($currentContractType !== '' && array_key_exists($currentContractType, $driverAllowances)) {
+                            $contractAllowance = $driverAllowances[$currentContractType];
+                            if (
+                                $contractAllowance !== null &&
+                                $contractAllowance !== '' &&
+                                is_numeric($contractAllowance)
+                            ) {
+                                $driverAllowanceValue = (float) $contractAllowance;
+                            }
+                        }
                     @endphp
                     <div class="section-title">2. Itinerary{{ $currentCar !== null ? ' (Per Car)' : '' }}</div>
                     <table class="itinerary">
@@ -411,8 +456,11 @@
                                     <td>{{ $day['dayDescription'] ?? ($day['dateDescription'] ?? ($day['description'] ?? '-')) }}
                                     </td>
                                     <td>
-                                        @if (isset($day['allowancePerDay']) && $day['allowancePerDay'] !== null && $day['allowancePerDay'] !== '')
-                                            {{ number_format((float) $day['allowancePerDay'], 2) }}
+                                        @php
+                                            $dayAllowance = $day['allowancePerDay'] ?? null;
+                                        @endphp
+                                        @if ($dayAllowance !== null && $dayAllowance !== '')
+                                            {{ number_format((float) $dayAllowance, 2) }}
                                         @else
                                             -
                                         @endif
@@ -434,6 +482,30 @@
                                     @endif
                                 </td>
                             </tr>
+                            <tr>
+                                <td colspan="2" style="text-align:right;"><span class="label">Map Route
+                                        Distance:</span></td>
+                                <td>{{ $mapDistanceKm > 0 ? number_format($mapDistanceKm, 1) . ' km' : '-' }}</td>
+                            </tr>
+                            <tr>
+                                <td colspan="2" style="text-align:right;"><span class="label">Additional
+                                        Distance{{ !empty($jobCard['additionalDistanceNote']) ? ' (' . $jobCard['additionalDistanceNote'] . ')' : '' }}:</span>
+                                </td>
+                                <td>{{ $additionalDistanceKm > 0 ? number_format($additionalDistanceKm, 1) . ' km' : '-' }}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td colspan="2" style="text-align:right;"><span class="label">Total Estimated
+                                        Distance:</span></td>
+                                <td>{{ $totalEstimatedDistanceKm > 0 ? number_format($totalEstimatedDistanceKm, 1) . ' km' : '-' }}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td colspan="2" style="text-align:right;"><span class="label">Fuel Allowance (Total
+                                        KM ÷ 6.5):</span></td>
+                                <td>{{ $fuelAllowanceLitres !== null ? number_format($fuelAllowanceLitres, 2) . ' litres' : '-' }}
+                                </td>
+                            </tr>
                         </tbody>
                     </table>
                 @else
@@ -448,6 +520,27 @@
                             <td><span class="label">Location:</span> {{ $jobCard['location'] ?? '-' }}</td>
                             <td><span class="label">KMS:</span> {{ $jobCard['kms'] ?? '-' }}</td>
                         </tr>
+                        <tr>
+                            <td><span class="label">Map Route Distance:</span>
+                                {{ $mapDistanceKm > 0 ? number_format($mapDistanceKm, 1) . ' km' : '-' }}</td>
+                            <td><span class="label">Additional Distance:</span>
+                                {{ $additionalDistanceKm > 0 ? number_format($additionalDistanceKm, 1) . ' km' : '-' }}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><span class="label">Total Estimated Distance:</span>
+                                {{ $totalEstimatedDistanceKm > 0 ? number_format($totalEstimatedDistanceKm, 1) . ' km' : '-' }}
+                            </td>
+                            <td><span class="label">Fuel Allowance:</span>
+                                {{ $fuelAllowanceLitres !== null ? number_format($fuelAllowanceLitres, 2) . ' litres' : '-' }}
+                            </td>
+                        </tr>
+                        @if (!empty($jobCard['additionalDistanceNote']))
+                            <tr>
+                                <td colspan="2"><span class="label">Additional Distance Note:</span>
+                                    {{ $jobCard['additionalDistanceNote'] }}</td>
+                            </tr>
+                        @endif
                     </table>
 
                     <div class="section-title">3. Vehicle Run Details</div>

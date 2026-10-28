@@ -240,6 +240,7 @@ Route::middleware(['auth:sanctum', 'audit.mutations', 'restrict.deletes'])->grou
     // Job Cards
     Route::get('/job-cards', [JobCardController::class, 'index'])->middleware('permission:job-cards.view');
     Route::get('/job-cards/{jobCard}', [JobCardController::class, 'show'])->middleware('permission:job-cards.view');
+    Route::patch('/job-cards/{jobCard}/status', [JobCardController::class, 'updateStatus'])->middleware('permission:job-cards.view');
     Route::get('/per-diems', [JobCardController::class, 'perDiemIndex'])->middleware('permission:job-cards.view');
     Route::get('/per-diems/{voucher}/pdf', [JobCardController::class, 'perDiemPdf'])->middleware('permission:job-cards.view');
     Route::post('/job-cards/{jobCard}/per-diem', [JobCardController::class, 'perDiem'])->middleware('permission:job-cards.view');
@@ -295,6 +296,8 @@ Route::middleware(['auth:sanctum', 'audit.mutations', 'restrict.deletes'])->grou
     Route::get('/fuel-management', [\App\Http\Controllers\Api\FuelManagementController::class, 'index'])->middleware(['permission:odometer-logs.view', 'permission:safari-allocations.view']);
     Route::get('/fuel-management/export/pdf', [\App\Http\Controllers\Api\FuelManagementController::class, 'exportPdf'])->middleware(['permission:odometer-logs.view', 'permission:safari-allocations.view']);
     Route::put('/fuel-management/monthly-price', [\App\Http\Controllers\Api\FuelManagementController::class, 'saveMonthlyPrice'])->middleware(['permission:odometer-logs.update', 'permission:safari-allocations.view']);
+    Route::put('/fuel-management/monthly-deduction', [\App\Http\Controllers\Api\FuelManagementController::class, 'saveMonthlyDeduction'])->middleware(['permission:odometer-logs.update', 'permission:safari-allocations.view']);
+    Route::delete('/fuel-management/monthly-deduction/{vehicleId}/{month}/{deductionId}', [\App\Http\Controllers\Api\FuelManagementController::class, 'deleteMonthlyDeduction'])->middleware(['permission:odometer-logs.update', 'permission:safari-allocations.view']);
     Route::put('/fuel-management/{allocationType}/{allocationId}', [\App\Http\Controllers\Api\FuelManagementController::class, 'save'])->middleware('permission:safari-allocations.view');
     Route::delete('/fuel-management/{allocationType}/{allocationId}', [\App\Http\Controllers\Api\FuelManagementController::class, 'destroy'])->middleware('permission:odometer-logs.view');
 
