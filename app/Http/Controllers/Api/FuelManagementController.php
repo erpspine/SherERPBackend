@@ -172,10 +172,10 @@ class FuelManagementController extends Controller
                 $days = $items->contains(fn(array $row): bool => $row['trip_days'] === null) ? null : (int) $items->sum('trip_days');
                 $km = (float) $calculated->sum('km_done');
                 $litres = (float) $calculated->sum('litres_consumed');
-                $expected = $km / 7;
+                $targetAverage = $targetAverages[$month] ?? null;
+                $expected = $targetAverage !== null ? $km / $targetAverage : $km / 7;
                 $excess = round(max(0, $litres - $expected), 2);
                 $average = $litres > 0 ? $km / $litres : null;
-                $targetAverage = $targetAverages[$month] ?? null;
                 $status = $average === null ? 'Pending' : ($targetAverage === null ? 'Target not set' : ($average < $targetAverage ? 'Deduction' : ($average < 7 ? 'Warning' : 'Good')));
                 $settlement = $monthlyDeductions[$items->first()['vehicle_id'] . ':' . $month] ?? [];
                 $deduction = $status === 'Target not set' ? 'Target not set' : ($status === 'Deduction' ? ($price === null ? 'Price not set' : round($excess * $price, 2)) : 0);

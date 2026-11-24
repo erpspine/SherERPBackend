@@ -44,24 +44,40 @@
         <tr><td><strong>Driver Name:</strong> {{ $voucher['driverName'] }}</td><td><strong>Vehicle Plate No:</strong> {{ !empty($voucher['vehiclePlateNo'] ?? null) ? $voucher['vehiclePlateNo'] : '—' }}</td></tr>
         <tr><td><strong>Client:</strong> {{ !empty($voucher['clientName'] ?? null) ? $voucher['clientName'] : '—' }}</td><td><strong>Group Name:</strong> {{ $voucher['groupName'] ?: '—' }}</td></tr>
         <tr><td><strong>Safari Start:</strong> {{ $voucher['safariStartDate'] ?: '—' }}</td><td><strong>Safari End:</strong> {{ $voucher['safariEndDate'] ?: '—' }}</td></tr>
+        <tr><td><strong>Payment Status:</strong> {{ strtoupper($voucher['paymentStatus'] ?? 'DRAFT') }}</td><td><strong>Payment Reference:</strong> {{ $voucher['paymentReference'] ?: '—' }}</td></tr>
+        @if(!empty($voucher['paymentBatchReference']))<tr><td colspan="2"><strong>Bank Batch:</strong> {{ $voucher['paymentBatchReference'] }}</td></tr>@endif
     </table>
     <table class="items">
-        <thead><tr><th style="width:22%;">Date / Day</th><th>Itinerary</th><th style="width:22%;text-align:right;">Amount</th></tr></thead>
+        <thead><tr><th style="width:22%;">Date / Day</th><th>Itinerary</th><th style="width:22%;text-align:right;">Approved Amount</th></tr></thead>
         <tbody>
             @foreach($voucher['items'] as $item)
                 <tr><td>{{ $item['date'] }}</td><td>{!! nl2br(e($item['dayDescription'])) !!}</td><td class="amount">{{ number_format($item['allowancePerDay'], 2) }}</td></tr>
             @endforeach
-            <tr><td colspan="2"><strong>Total Amount</strong></td><td class="amount"><strong>{{ number_format($voucher['total'], 2) }}</strong></td></tr>
+            <tr><td colspan="2"><strong>Total Approved Amount</strong></td><td class="amount"><strong>{{ number_format($voucher['total'], 2) }}</strong></td></tr>
         </tbody>
     </table>
+    @if(!empty($voucher['payments']))
+        <h2>Payment details</h2>
+        <table class="items">
+            <thead><tr><th>Stage</th><th>Status / Date</th><th>Reference</th><th class="amount">Amount</th></tr></thead>
+            <tbody>
+                @foreach($voucher['payments'] as $payment)
+                    <tr><td>{{ ucfirst($payment['stage']) }}</td><td>{{ ucfirst($payment['status']) }}{{ $payment['paidAt'] ? ' · '.$payment['paidAt'] : '' }}</td><td>{{ $payment['reference'] ?: '—' }}</td><td class="amount">{{ number_format($payment['amount'], 2) }}</td></tr>
+                @endforeach
+                <tr><td colspan="3"><strong>Total confirmed paid</strong></td><td class="amount"><strong>{{ number_format($voucher['paidAmount'], 2) }}</strong></td></tr>
+            </tbody>
+        </table>
+    @endif
     <div class="signatures">
         <h2>Prepared By</h2>
         <p>Name: {{ $voucher['preparedBy'] }}</p>
         <p class="signature-line">Signature: _______________________ &nbsp; Date: __________________</p>
-        <h2>Recipient Acknowledgement</h2>
-        <p>I hereby acknowledge that I have received the total amount stated above as allowance for the specified safari trip.</p>
-        <p>Driver Name: {{ $voucher['driverName'] }}</p>
-        <p class="signature-line">Signature: _______________________ &nbsp; Date: __________________</p>
+        @if(($voucher['paidAmount'] ?? 0) > 0)
+            <h2>Recipient Acknowledgement</h2>
+            <p>I hereby acknowledge receipt of {{ number_format($voucher['paidAmount'], 2) }} in confirmed per diem payments for the specified safari trip.</p>
+            <p>Driver Name: {{ $voucher['driverName'] }}</p>
+            <p class="signature-line">Signature: _______________________ &nbsp; Date: __________________</p>
+        @endif
     </div>
 </body>
 </html>

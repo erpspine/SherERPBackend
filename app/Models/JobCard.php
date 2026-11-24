@@ -79,6 +79,11 @@ class JobCard extends Model
         return $this->hasMany(PerDiemVoucher::class);
     }
 
+    public function confirmedPerDiemVouchers(): HasMany
+    {
+        return $this->perDiemVouchers()->whereNotNull('confirmed_at');
+    }
+
     public function safariAllocations(): HasMany
     {
         return $this->hasMany(SafariAllocation::class, 'lead_id', 'lead_id');

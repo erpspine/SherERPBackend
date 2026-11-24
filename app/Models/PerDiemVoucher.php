@@ -6,11 +6,29 @@ use Illuminate\Database\Eloquent\Model;
 
 class PerDiemVoucher extends Model
 {
-    protected $fillable = ['job_card_id', 'driver_key', 'snapshot'];
+    protected $fillable = [
+        'job_card_id',
+        'driver_key',
+        'snapshot',
+        'requested_for_approval_at',
+        'payment_status',
+        'payment_reference',
+        'payment_batch_reference',
+        'approved_by',
+        'approved_at',
+        'exported_at',
+        'paid_at',
+        'confirmed_at',
+    ];
 
     public function jobCard(): \Illuminate\Database\Eloquent\Relations\BelongsTo
     {
         return $this->belongsTo(JobCard::class);
+    }
+
+    public function paymentLines(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(PerDiemPaymentLine::class);
     }
 
     public function number(): string
@@ -20,6 +38,13 @@ class PerDiemVoucher extends Model
 
     protected function casts(): array
     {
-        return ['snapshot' => 'array'];
+        return [
+            'snapshot' => 'array',
+            'requested_for_approval_at' => 'datetime',
+            'approved_at' => 'datetime',
+            'exported_at' => 'datetime',
+            'paid_at' => 'datetime',
+            'confirmed_at' => 'datetime',
+        ];
     }
 }

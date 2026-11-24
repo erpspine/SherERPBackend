@@ -29,7 +29,10 @@ class PerDiemVoucherTest extends TestCase
             ],
         ]);
         $url = '/api/job-cards/'.$card->id.'/per-diem';
-        $body = ['driverKey' => 'manual-'.hash('sha256', 'Test Driver')];
+        $body = [
+            'driverKey' => 'manual-'.hash('sha256', 'Test Driver'),
+            'pushForApproval' => true,
+        ];
         $this->postJson($url, $body)->assertOk()->assertHeader('content-type', 'application/pdf');
         $voucher = PerDiemVoucher::sole();
         $this->assertEquals(30.30, $voucher->snapshot['total']);

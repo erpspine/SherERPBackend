@@ -94,6 +94,12 @@ class SafariAllocationController extends Controller
 
         $resolvedLeaseType = $validated['vehicleLeaseType'] ?? 'Short-Term Lease';
         $this->validateVehicleLeaseTypeMatch((int) $validated['vehicleId'], $resolvedLeaseType);
+        $this->rejectDuplicateAllocation(
+            (int) $validated['leadId'],
+            (int) $validated['vehicleId'],
+            $startDate,
+            $endDate,
+        );
 
         $allocation = SafariAllocation::create([
             'lead_id' => $validated['leadId'],
@@ -155,6 +161,13 @@ class SafariAllocationController extends Controller
         $nextVehicleId = (int) ($validated['vehicleId'] ?? $safariAllocation->vehicle_id);
         $nextLeaseType = $validated['vehicleLeaseType'] ?? $safariAllocation->vehicle_lease_type ?? 'Short-Term Lease';
         $this->validateVehicleLeaseTypeMatch($nextVehicleId, $nextLeaseType);
+        $this->rejectDuplicateAllocation(
+            $nextLeadId,
+            $nextVehicleId,
+            $startDate,
+            $endDate,
+            $safariAllocation->id,
+        );
         $previousLeadId = (int) $safariAllocation->lead_id;
         $previousProformaInvoiceId = $safariAllocation->proforma_invoice_id !== null
             ? (int) $safariAllocation->proforma_invoice_id
@@ -664,6 +677,32 @@ class SafariAllocationController extends Controller
         if ($vehicleLeaseType !== 'Subcontract' && $isSubcontractedVehicle) {
             throw ValidationException::withMessages([
                 'vehicleLeaseType' => ['Subcontracted vehicles can only be assigned with lease type Subcontract.'],
+            ]);
+        }
+    }
+
+    private function rejectDuplicateAllocation(
+        int $leadId,
+        int $vehicleId,
+        ?string $startDate,
+        ?string $endDate,
+        ?int $exceptId = null,
+    ): void {
+        if (!$startDate || !$endDate) {
+            return;
+        }
+
+        $duplicate = SafariAllocation::query()
+            ->where('lead_id', $leadId)
+            ->where('vehicle_id', $vehicleId)
+            ->whereDate('start_date', $startDate)
+            ->whereDate('end_date', $endDate)
+            ->when($exceptId, fn($query) => $query->where('id', '!=', $exceptId))
+            ->exists();
+
+        if ($duplicate) {
+            throw ValidationException::withMessages([
+                'vehicleId' => ['This vehicle is already allocated to the same safari for these dates.'],
             ]);
         }
     }

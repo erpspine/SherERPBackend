@@ -9,10 +9,13 @@ use App\Models\Lead;
 use App\Models\LeaseAllocation;
 use App\Models\SafariAllocation;
 use App\Models\Setting;
+use App\Models\User;
+use App\Support\PerDiemAllocation;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -32,7 +35,11 @@ class JobCardController extends Controller
 
         $query = JobCard::query()
             ->with(['lead', 'vehicle', 'leaseContract', 'leaseAllocation.vehicle', 'leaseAllocation.driver', 'leaseAllocation.leaseContract'])
-            ->withCount('perDiemVouchers')
+            // The job-card list uses this count to show whether an allowance
+            // has been pushed for approval, so pending/draft vouchers must be
+            // included before they are confirmed as paid.
+            ->withCount('perDiemVouchers as per_diem_vouchers_count')
+            ->withCount(['confirmedPerDiemVouchers as paid_per_diem_vouchers_count' => fn ($query) => $query->where('payment_status', 'paid')])
             ->withCount(['safariAllocations as assigned_driver_count' => fn($query) => $query->whereNotNull('driver_id')])
             ->withMax('perDiemVouchers', 'updated_at')
             ->latest('id');
@@ -181,8 +188,24 @@ class JobCardController extends Controller
         }
 
         $payload = $this->applyTypeSpecificPayload($validated, $type, $jobCard);
+        $allowanceChanged = $this->allowancePayloadChanged($jobCard, $payload);
 
-        $jobCard->update($payload);
+        DB::transaction(function () use ($jobCard, $payload, $allowanceChanged): void {
+            if ($allowanceChanged) {
+                $jobCard->load('perDiemVouchers.paymentLines');
+                foreach ($jobCard->perDiemVouchers as $voucher) {
+                    $this->assertAllowanceCanBeChanged($voucher);
+                }
+            }
+
+            $jobCard->update($payload);
+
+            if ($allowanceChanged) {
+                foreach ($jobCard->perDiemVouchers as $voucher) {
+                    $this->refreshVoucherAllowance($voucher, $payload['route_itinerary'] ?? []);
+                }
+            }
+        });
 
         $jobCard->load(['lead', 'vehicle', 'leaseContract', 'leaseAllocation.vehicle', 'leaseAllocation.driver', 'leaseAllocation.leaseContract']);
 
@@ -256,10 +279,16 @@ class JobCardController extends Controller
         return $pdf->download($filename);
     }
 
-    public function perDiem(Request $request, JobCard $jobCard): Response
+    public function perDiem(Request $request, JobCard $jobCard): JsonResponse
     {
         $this->authorize('view', $jobCard);
-        $validated = $request->validate(['driverKey' => ['required', 'string', 'max:100']]);
+        $validated = $request->validate([
+            'driverKey' => ['required', 'string', 'max:100'],
+            // Creating a per diem is an explicit workflow action. Require the
+            // caller to opt in so job-card create/update/status requests can
+            // never accidentally create a voucher.
+            'pushForApproval' => ['required', 'boolean', 'accepted'],
+        ]);
         $jobCard->load(['lead', 'vehicle', 'leaseContract', 'leaseAllocation.driver', 'leaseAllocation.vehicle']);
         $data = $this->transformWithDriverProfiles($jobCard);
         $driver = collect($data['driverProfiles'])->first(function ($profile) use ($validated) {
@@ -273,19 +302,31 @@ class JobCardController extends Controller
 
         $allocatedVehicle = collect($data['allocatedVehicles'] ?? [])
             ->first(fn(array $allocation): bool => (int) ($allocation['driverProfile']['id'] ?? 0) === (int) ($driver['id'] ?? 0));
-        $vehiclePlateNo = $allocatedVehicle['plateNo']
-            ?? ($jobCard->leaseAllocation?->vehicle?->plate_no ?? $jobCard->vehicle?->plate_no ?? '');
+        $driverVehicles = $this->allocatedVehiclesForDriver($jobCard, $driver['id'] ?? null);
+        $vehiclePlateNo = $driverVehicles->pluck('vehicle.plate_no')
+            ->filter()
+            ->unique()
+            ->implode(', ');
+        $vehiclePlateNo = $vehiclePlateNo !== ''
+            ? $vehiclePlateNo
+            : ($allocatedVehicle['plateNo']
+                ?? ($jobCard->leaseAllocation?->vehicle?->plate_no ?? $jobCard->vehicle?->plate_no ?? ''));
         $clientName = $data['tourOperatorClientName']
             ?: ($jobCard->leaseAllocation?->leaseContract?->client_name
                 ?? $jobCard->leaseContract?->client_name
                 ?? $jobCard->lead?->client_company
                 ?? '');
 
-        $voucher = \Illuminate\Support\Facades\DB::transaction(function () use ($jobCard, $validated, $data, $driver, $request, $vehiclePlateNo, $clientName) {
+        $vehicleCount = max(1, $driverVehicles->count());
+        $voucher = \Illuminate\Support\Facades\DB::transaction(function () use ($jobCard, $validated, $data, $driver, $request, $vehiclePlateNo, $clientName, $vehicleCount) {
             JobCard::whereKey($jobCard->id)->lockForUpdate()->firstOrFail();
             $existing = \App\Models\PerDiemVoucher::where('job_card_id', $jobCard->id)
                 ->where('driver_key', $validated['driverKey'])
+                ->lockForUpdate()
                 ->first();
+            if ($existing) {
+                $this->assertAllowanceCanBeChanged($existing);
+            }
             $items = $data['routeItinerary'];
             abort_if(empty($items), 422, 'Add itinerary lines and daily allowances to the job card first.');
             $driverContractType = trim((string) ($driver['contractType'] ?? ''));
@@ -301,7 +342,7 @@ class JobCardController extends Controller
                     422,
                     'Enter a non-negative allowance for every itinerary line before generating the voucher.'
                 );
-                $cents = (int) round($item['allowancePerDay'] * 100);
+                $cents = (int) round($item['allowancePerDay'] * $vehicleCount * 100);
                 $item['allowancePerDay'] = $cents / 100;
                 $totalCents += $cents;
             }
@@ -311,6 +352,7 @@ class JobCardController extends Controller
                 'createdAt' => $jobCard->created_at?->format('d M Y'),
                 'driverName' => $driver['name'],
                 'vehiclePlateNo' => $vehiclePlateNo,
+                'vehicleCount' => $vehicleCount,
                 'clientName' => $clientName,
                 'groupName' => $data['groupName'],
                 'safariStartDate' => $jobCard->safari_start_date?->format('d M Y'),
@@ -318,29 +360,392 @@ class JobCardController extends Controller
                 'items' => $items,
                 'total' => $totalCents / 100,
                 'preparedBy' => $request->user()->name,
+                'contractType' => $driver['contractType'] ?? '',
+                'bankName' => $driver['bankName'] ?? '',
+                'bankAccountNumber' => $driver['bankAccountNumber'] ?? '',
+                'bankAccountName' => $driver['name'],
             ];
 
             if ($existing) {
-                $existing->update(['snapshot' => $snapshot]);
+                $snapshotChanged = $this->allowanceSnapshotChanged($existing->snapshot, $snapshot);
+                if ($snapshotChanged && $existing->paymentLines()->exists()) {
+                    $this->resetAllowanceApproval($existing);
+                }
+                $existing->update([
+                    'snapshot' => $snapshot,
+                    'requested_for_approval_at' => now(),
+                ]);
+                $this->syncPerDiemPaymentLines($existing->fresh());
                 return $existing->fresh();
             }
 
-            return \App\Models\PerDiemVoucher::create([
+            $voucher = \App\Models\PerDiemVoucher::create([
                 'job_card_id' => $jobCard->id,
                 'driver_key' => $validated['driverKey'],
                 'snapshot' => $snapshot,
+                'requested_for_approval_at' => now(),
             ]);
+            $this->syncPerDiemPaymentLines($voucher);
+            return $voucher->fresh();
         });
-        return $this->renderPerDiem($voucher);
+        return response()->json([
+            'message' => 'Allowance scheduled for approval. The per diem PDF will be generated when payment is confirmed.',
+            'perDiem' => $this->transformPerDiemVoucher($voucher->load('paymentLines', 'jobCard')),
+        ]);
+    }
+
+    public function approvePerDiemPayments(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'paymentIds' => ['required', 'array', 'min:1'],
+            'paymentIds.*' => ['integer', 'distinct', 'exists:per_diem_payment_lines,id'],
+            'approvals' => ['sometimes', 'array'],
+            'approvals.*.id' => ['required', 'integer', 'distinct'],
+            'approvals.*.amount' => ['required', 'numeric', 'min:0.01'],
+            'approvals.*.reason' => ['nullable', 'string', 'max:1000'],
+            'approvals.*.paymentMode' => ['nullable', Rule::in(['advance', 'full'])],
+            'rejectPaymentIds' => ['sometimes', 'array'],
+            'rejectPaymentIds.*' => ['integer', 'distinct', 'exists:per_diem_payment_lines,id'],
+        ]);
+
+        $approved = DB::transaction(function () use ($validated, $request) {
+            $payments = \App\Models\PerDiemPaymentLine::query()
+                ->with('voucher.jobCard')
+                ->whereIn('id', $validated['paymentIds'])
+                ->lockForUpdate()
+                ->get();
+
+            foreach ($payments as $payment) {
+                $voucher = $payment->voucher;
+                $this->authorize('update', $voucher->jobCard);
+                $snapshot = is_array($voucher->snapshot) ? $voucher->snapshot : [];
+                $contractType = $this->perDiemContractType($voucher, $snapshot);
+                if (blank($snapshot['bankAccountNumber'] ?? null) && ctype_digit((string) $voucher->driver_key)) {
+                    $driver = User::query()->find((int) $voucher->driver_key);
+                    $snapshot['bankName'] = $driver?->bank_name ?? '';
+                    $snapshot['bankAccountNumber'] = $driver?->bank_account_number ?? '';
+                    $snapshot['bankAccountName'] = $driver?->name ?? ($snapshot['driverName'] ?? '');
+                    $voucher->snapshot = $snapshot;
+                    $voucher->save();
+                }
+                abort_if(blank($snapshot['bankAccountNumber'] ?? null), 422, "Add bank account details for {$snapshot['driverName']} before approval.");
+                abort_if($payment->status !== 'draft', 422, "Payment {$voucher->number()} is already approved or exported.");
+                if (in_array($payment->id, $validated['rejectPaymentIds'] ?? [], true)) {
+                    $payment->update(['status' => 'rejected', 'approval_reason' => 'Declined during allowance review.']);
+                    continue;
+                }
+                $approval = collect($validated['approvals'] ?? [])->firstWhere('id', $payment->id);
+                $mode = $approval['paymentMode'] ?? null;
+                $approvedAmount = $approval ? round((float) $approval['amount'], 2) : round((float) $payment->amount, 2);
+                abort_if($approvedAmount <= 0, 422, "Payment {$voucher->number()} has no payable amount.");
+                $requestedAmount = round((float) ($payment->requested_amount ?? $payment->amount), 2);
+                $totalAllowance = round((float) ($snapshot['total'] ?? 0), 2);
+                if ($mode === 'advance') {
+                    abort_if($payment->stage === 'balance' || str_starts_with($payment->stage, 'remainder-'), 422, 'A balance cannot be approved as an advance.');
+                    abort_if($approvedAmount >= $totalAllowance, 422, 'An advance must be less than the full allowance.');
+                } elseif ($mode === 'full') {
+                    abort_if($approvedAmount > $totalAllowance, 422, "Approval exceeds the job card allowance value for {$voucher->number()}.");
+                } else {
+                    abort_if($approvedAmount > $requestedAmount, 422, "Approved amount cannot exceed the requested allowance for {$voucher->number()}.");
+                }
+                $alreadyApproved = (float) $voucher->paymentLines()->whereIn('status', ['approved', 'exported', 'paid'])->sum('amount');
+                abort_if($alreadyApproved + $approvedAmount > $totalAllowance, 422, "Approval exceeds the job card allowance value for {$voucher->number()}.");
+                if ($mode === 'full' && $payment->stage === 'advance') {
+                    $payment->stage = 'full';
+                } elseif ($mode === 'advance' && $payment->stage === 'full') {
+                    $payment->stage = 'advance';
+                }
+
+                $voucher->update([
+                    'payment_status' => 'approved',
+                    'payment_reference' => $voucher->payment_reference ?: 'PAY-' . $voucher->number(),
+                    'approved_by' => $request->user()->id,
+                    'approved_at' => now(),
+                ]);
+                $payment->update([
+                    // Keep the original request for comparison on the approval
+                    // and paid views; the approved amount belongs in `amount`.
+                    'requested_amount' => $payment->requested_amount ?? $payment->amount,
+                    'amount' => $approvedAmount,
+                    'status' => 'approved',
+                    'payment_reference' => 'PAY-' . $voucher->number() . '-' . strtoupper(substr($payment->stage, 0, 3)),
+                    'approved_by' => $request->user()->id,
+                    'approved_at' => now(),
+                    'approval_reason' => $approval ? trim((string) ($approval['reason'] ?? '')) ?: null : null,
+                ]);
+                $remainder = $mode === 'advance' ? round($totalAllowance - $alreadyApproved - $approvedAmount, 2) : ($mode === 'full' ? 0 : round($requestedAmount - $approvedAmount, 2));
+                if ($mode && $voucher->paymentLines()->where('stage', 'balance')->where('status', 'draft')->exists()) {
+                    $balance = $voucher->paymentLines()->where('stage', 'balance')->where('status', 'draft')->first();
+                    if ($remainder > 0) $balance->update(['amount' => $remainder, 'requested_amount' => $remainder]);
+                    else $balance->update(['status' => 'rejected', 'approval_reason' => 'Superseded by full payment.']);
+                    $remainder = 0;
+                }
+                if ($remainder > 0) {
+                    \App\Models\PerDiemPaymentLine::create([
+                        'per_diem_voucher_id' => $voucher->id,
+                        'stage' => $mode === 'advance' ? 'balance' : 'remainder-' . $payment->id,
+                        'amount' => $remainder,
+                        'requested_amount' => $remainder,
+                        'status' => 'draft',
+                    ]);
+                }
+            }
+
+            return $payments->fresh('voucher');
+        });
+
+        return response()->json([
+            'message' => 'Per diem payments approved successfully.',
+            'payments' => $approved->map(fn ($payment) => $this->transformPerDiemPayment($payment))->values(),
+        ]);
+    }
+
+    public function markPerDiemPaid(Request $request, \App\Models\PerDiemPaymentLine $payment): JsonResponse
+    {
+        $this->authorize('update', $payment->voucher->jobCard);
+        abort_if(!in_array($payment->status, ['approved', 'exported'], true), 422, 'Only approved payments can be marked as paid.');
+        $validated = $request->validate([
+            'paymentReference' => ['nullable', 'string', 'max:100'],
+            'paymentProof' => ['required', 'file', 'max:10240', 'mimes:pdf,jpg,jpeg,png'],
+        ]);
+
+        $path = $request->file('paymentProof')->store('per-diem-payment-proofs', 'public');
+        DB::transaction(function () use ($payment, $validated, $path, $request): void {
+            $payment->update([
+                'status' => 'paid',
+                'payment_reference' => trim((string) ($validated['paymentReference'] ?? '')) ?: $payment->payment_reference,
+                'payment_proof_path' => $path,
+                'paid_by' => $request->user()->id,
+                'paid_at' => now(),
+            ]);
+            $this->storeConfirmedPerDiem($payment->voucher);
+        });
+
+        return response()->json([
+            'message' => 'Payment proof uploaded and allowance marked as paid.',
+            'payment' => $this->transformPerDiemPayment($payment->fresh('voucher')),
+        ]);
+    }
+
+    public function markPerDiemBatchPaid(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'paymentIds' => ['required', 'array', 'min:1'],
+            'paymentIds.*' => ['integer', 'distinct', 'exists:per_diem_payment_lines,id'],
+            'paymentReference' => ['nullable', 'string', 'max:90'],
+            'paymentProof' => ['nullable', 'file', 'max:10240', 'mimes:pdf,jpg,jpeg,png'],
+        ]);
+
+        $paid = DB::transaction(function () use ($validated, $request) {
+            $payments = \App\Models\PerDiemPaymentLine::query()
+                ->with('voucher.jobCard')
+                ->whereIn('id', $validated['paymentIds'])
+                ->lockForUpdate()
+                ->get();
+
+            abort_if($payments->count() !== count($validated['paymentIds']), 422, 'One or more selected payments no longer exist.');
+            foreach ($payments as $payment) {
+                $this->authorize('update', $payment->voucher->jobCard);
+                abort_if($payment->status !== 'exported', 422, "Only payments with a bank file can be marked paid. {$payment->voucher->number()} is {$payment->status}.");
+            }
+
+            $proofPath = $request->hasFile('paymentProof')
+                ? $request->file('paymentProof')->store('per-diem-payment-proofs', 'public')
+                : null;
+            $reference = trim((string) ($validated['paymentReference'] ?? ''));
+            foreach ($payments as $payment) {
+                $payment->update([
+                    'status' => 'paid',
+                    'payment_reference' => $reference !== '' ? $reference . '-' . $payment->id : $payment->payment_reference,
+                    'payment_proof_path' => $proofPath,
+                    'paid_by' => $request->user()->id,
+                    'paid_at' => now(),
+                ]);
+            }
+
+            foreach ($payments->pluck('voucher')->unique('id') as $voucher) {
+                $this->storeConfirmedPerDiem($voucher);
+            }
+
+            return $payments->count();
+        });
+
+        return response()->json(['message' => "{$paid} payment(s) marked as paid.", 'paidCount' => $paid]);
+    }
+
+    public function updatePerDiemPayment(Request $request, \App\Models\PerDiemPaymentLine $payment): JsonResponse
+    {
+        $payment->load('voucher.jobCard', 'voucher.paymentLines');
+        $this->authorize('update', $payment->voucher->jobCard);
+        abort_if($payment->status === 'paid', 422, 'Paid payments cannot be edited.');
+        abort_unless(in_array($payment->status, ['approved', 'exported'], true), 422, 'Only unpaid payments can be edited.');
+
+        $validated = $request->validate([
+            'amount' => ['required', 'numeric', 'min:0.01'],
+            'paymentReference' => ['nullable', 'string', 'max:100'],
+            'approvalReason' => ['nullable', 'string', 'max:1000'],
+        ]);
+        $snapshot = is_array($payment->voucher->snapshot) ? $payment->voucher->snapshot : [];
+        $totalAllowance = round((float) ($snapshot['total'] ?? 0), 2);
+        $otherApproved = (float) $payment->voucher->paymentLines
+            ->whereIn('status', ['approved', 'exported', 'paid'])
+            ->where('id', '!=', $payment->id)
+            ->sum('amount');
+        $amount = round((float) $validated['amount'], 2);
+        abort_if($otherApproved + $amount > $totalAllowance, 422, 'The edited amount exceeds the job card allowance value.');
+
+        $payment->update([
+            'amount' => $amount,
+            'payment_reference' => trim((string) ($validated['paymentReference'] ?? '')) ?: $payment->payment_reference,
+            'approval_reason' => trim((string) ($validated['approvalReason'] ?? '')) ?: null,
+        ]);
+
+        return response()->json([
+            'message' => 'Payment record updated successfully.',
+            'payment' => $this->transformPerDiemPayment($payment->fresh('voucher')),
+        ]);
+    }
+
+    public function confirmPerDiemBankUpload(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'paymentIds' => ['required', 'array', 'min:1'],
+            'paymentIds.*' => ['integer', 'distinct', 'exists:per_diem_payment_lines,id'],
+        ]);
+
+        $confirmed = DB::transaction(function () use ($validated) {
+            $payments = \App\Models\PerDiemPaymentLine::query()
+                ->with('voucher.jobCard')
+                ->whereIn('id', $validated['paymentIds'])
+                ->lockForUpdate()
+                ->get();
+
+            abort_if($payments->count() !== count($validated['paymentIds']), 422, 'One or more selected payments no longer exist.');
+            foreach ($payments as $payment) {
+                $this->authorize('update', $payment->voucher->jobCard);
+                abort_if($payment->status !== 'approved', 422, "Only approved payments can be confirmed as uploaded. {$payment->voucher->number()} is {$payment->status}.");
+            }
+
+            $batchReference = 'BANK-' . now()->format('YmdHis') . '-' . strtoupper(Str::random(5));
+            $payments->each(fn ($payment) => $payment->update([
+                'status' => 'exported',
+                'payment_batch_reference' => $batchReference,
+                'exported_at' => now(),
+            ]));
+
+            return $payments->count();
+        });
+
+        return response()->json([
+            'message' => "{$confirmed} payment(s) confirmed as uploaded on the bank side.",
+            'confirmedCount' => $confirmed,
+        ]);
+    }
+
+    public function updatePerDiemDeduction(Request $request, \App\Models\PerDiemPaymentLine $payment): JsonResponse
+    {
+        $this->authorize('update', $payment->voucher->jobCard);
+        abort_unless($payment->stage === 'balance', 422, 'Only the freelance balance can have a return deduction.');
+        abort_unless($payment->voucher->jobCard->status === 'Closed', 422, 'Close the job card before entering the final deduction.');
+        abort_if($payment->status !== 'draft', 422, 'This payment is already approved or exported.');
+
+        $validated = $request->validate([
+            'fuelDeduction' => ['required', 'numeric', 'min:0'],
+            'deductionReason' => ['required', 'string', 'max:1000'],
+        ]);
+        $snapshot = is_array($payment->voucher->snapshot) ? $payment->voucher->snapshot : [];
+        $baseBalance = round((float) ($snapshot['total'] ?? 0) - round((float) ($snapshot['total'] ?? 0) / 2, 2), 2);
+        $deduction = round((float) $validated['fuelDeduction'], 2);
+        abort_if($deduction > $baseBalance, 422, 'The deduction cannot exceed the freelance balance.');
+        $payment->update([
+            'amount' => round($baseBalance - $deduction, 2),
+            'fuel_deduction' => $deduction,
+            'deduction_reason' => trim($validated['deductionReason']),
+        ]);
+
+        return response()->json(['payment' => $this->transformPerDiemPayment($payment->fresh('voucher'))]);
+    }
+
+    public function exportPerDiemBankFile(Request $request): Response
+    {
+        $validated = $request->validate([
+            'paymentIds' => ['required', 'array', 'min:1'],
+            'paymentIds.*' => ['integer', 'distinct', 'exists:per_diem_payment_lines,id'],
+        ]);
+
+        $result = DB::transaction(function () use ($validated) {
+            $payments = \App\Models\PerDiemPaymentLine::query()
+                ->with('voucher.jobCard')
+                ->whereIn('id', $validated['paymentIds'])
+                ->lockForUpdate()
+                ->get()
+                ->sortBy('id')
+                ->values();
+
+            abort_if($payments->isEmpty(), 422, 'Select at least one payment for the bank file.');
+            foreach ($payments as $payment) {
+                $this->authorize('update', $payment->voucher->jobCard);
+                $contractType = $this->perDiemContractType($payment->voucher, $payment->voucher->snapshot ?: []);
+                abort_if($payment->status !== 'approved', 422, "Only approved payments can be exported. {$payment->voucher->number()} is {$payment->status}.");
+            }
+
+            $batchReference = 'BANK-' . now()->format('YmdHis') . '-' . strtoupper(Str::random(5));
+            $payments->each(fn ($payment) => $payment->update([
+                'status' => 'exported',
+                'payment_batch_reference' => $batchReference,
+                'exported_at' => now(),
+            ]));
+
+            return compact('payments', 'batchReference');
+        });
+
+        $rows = [[
+            'payment_reference', 'beneficiary_name', 'bank_name', 'account_number',
+            'amount', 'currency', 'narration',
+        ]];
+        foreach ($result['payments'] as $payment) {
+            $voucher = $payment->voucher;
+            $snapshot = is_array($voucher->snapshot) ? $voucher->snapshot : [];
+            $rows[] = [
+                $payment->payment_reference,
+                $snapshot['bankAccountName'] ?? $snapshot['driverName'] ?? '',
+                $snapshot['bankName'] ?? '',
+                $snapshot['bankAccountNumber'] ?? '',
+                number_format((float) $payment->amount, 2, '.', ''),
+                'TZS',
+                'Per diem ' . $voucher->number() . ' ' . ucfirst($payment->stage),
+            ];
+        }
+
+        $csv = collect($rows)->map(fn (array $row) => collect($row)->map(function ($value) {
+            return '"' . str_replace('"', '""', (string) $value) . '"';
+        })->implode(','))->implode("\r\n") . "\r\n";
+
+        return response($csv, 200, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => 'attachment; filename="' . $result['batchReference'] . '.csv"',
+            'X-Payment-Batch-Reference' => $result['batchReference'],
+        ]);
     }
 
     public function perDiemIndex(Request $request): JsonResponse
     {
         $this->authorize('viewAny', JobCard::class);
-        $request->validate(['jobCardId' => ['nullable', 'integer', 'min:1']]);
+        $request->validate([
+            'jobCardId' => ['nullable', 'integer', 'min:1'],
+            'awaitingApproval' => ['nullable', 'boolean'],
+            'confirmedOnly' => ['nullable', 'boolean'],
+        ]);
         $query = \App\Models\PerDiemVoucher::query()->latest('id');
         if ($request->filled('jobCardId')) {
             $query->where('job_card_id', $request->integer('jobCardId'));
+        }
+        if ($request->boolean('awaitingApproval')) {
+            $query->whereNotNull('requested_for_approval_at')
+                ->whereHas('paymentLines', fn ($lineQuery) => $lineQuery->where('status', 'draft'));
+        }
+        if ($request->boolean('confirmedOnly')) {
+            $query->whereNotNull('confirmed_at');
         }
         if ($request->user()->hasRole('Driver')) {
             $query->where('driver_key', (string) $request->user()->id)
@@ -349,15 +754,204 @@ class JobCardController extends Controller
                     SafariAllocation::where('driver_id', $request->user()->id)->select('lead_id')
                 ));
         }
-        return response()->json(['perDiems' => $query->get()->map(fn($voucher) => [
+        $vouchers = $query->with(['paymentLines', 'jobCard'])->get();
+        $vouchers->each(fn ($voucher) => $this->syncPerDiemPaymentLines($voucher));
+        return response()->json(['perDiems' => $vouchers->load('paymentLines')->map(fn($voucher) => $this->transformPerDiemVoucher($voucher))]);
+    }
+
+    private function syncPerDiemPaymentLines($voucher): void
+    {
+        if ($voucher->paymentLines()->exists()) return;
+        $snapshot = is_array($voucher->snapshot) ? $voucher->snapshot : [];
+        $contractType = $this->perDiemContractType($voucher, $snapshot);
+        if (($snapshot['contractType'] ?? '') !== ($contractType === 'freelance' ? 'Freelance' : ($snapshot['contractType'] ?? ''))) {
+            $snapshot['contractType'] = $contractType === 'freelance' ? 'Freelance' : ($snapshot['contractType'] ?? '');
+            $voucher->snapshot = $snapshot;
+            $voucher->save();
+        }
+        $total = round((float) ($snapshot['total'] ?? 0), 2);
+        $status = $voucher->payment_status ?: 'draft';
+        $stages = $contractType === 'freelance'
+            ? ['advance' => round($total / 2, 2), 'balance' => round($total - round($total / 2, 2), 2)]
+            : ['full' => $total];
+
+        foreach ($stages as $stage => $amount) {
+            \App\Models\PerDiemPaymentLine::firstOrCreate(
+                ['per_diem_voucher_id' => $voucher->id, 'stage' => $stage],
+                [
+                    'amount' => $amount,
+                    'requested_amount' => $amount,
+                    'status' => $status === 'exported' ? 'exported' : $status,
+                    'payment_reference' => $voucher->payment_reference ? $voucher->payment_reference . '-' . strtoupper(substr($stage, 0, 3)) : null,
+                    'payment_batch_reference' => $voucher->payment_batch_reference,
+                    'approved_at' => $voucher->approved_at,
+                    'exported_at' => $voucher->exported_at,
+                ],
+            );
+        }
+    }
+
+    private function assertAllowanceCanBeChanged($voucher): void
+    {
+        $voucher->loadMissing('paymentLines');
+        $locked = $voucher->paymentLines->contains(fn ($line): bool => in_array($line->status, ['exported', 'paid'], true))
+            || in_array($voucher->payment_status, ['exported', 'paid'], true)
+            || $voucher->exported_at !== null
+            || $voucher->paid_at !== null
+            || $voucher->confirmed_at !== null;
+
+        abort_if($locked, 422, 'This allowance cannot be changed because payment has already been uploaded or marked as paid.');
+    }
+
+    private function resetAllowanceApproval($voucher): void
+    {
+        $this->assertAllowanceCanBeChanged($voucher);
+        $voucher->paymentLines()->delete();
+        $voucher->update([
+            'payment_status' => 'draft',
+            'payment_reference' => null,
+            'payment_batch_reference' => null,
+            'approved_by' => null,
+            'approved_at' => null,
+            'exported_at' => null,
+            'paid_at' => null,
+            'confirmed_at' => null,
+        ]);
+    }
+
+    private function refreshVoucherAllowance($voucher, array $routeItinerary): void
+    {
+        $this->resetAllowanceApproval($voucher);
+
+        $snapshot = is_array($voucher->snapshot) ? $voucher->snapshot : [];
+        $items = $routeItinerary;
+        $contractType = trim((string) ($snapshot['contractType'] ?? ''));
+        $contractAllowances = is_array($voucher->jobCard?->driver_allowances)
+            ? $voucher->jobCard->driver_allowances
+            : [];
+        $contractAllowance = $contractType !== '' ? ($contractAllowances[$contractType] ?? null) : null;
+        $vehicleCount = max(1, $this->allocatedVehiclesForDriver($voucher->jobCard, $voucher->driver_key)->count());
+        $totalCents = 0;
+
+        foreach ($items as &$item) {
+            if ($contractAllowance !== null && is_numeric($contractAllowance)) {
+                $item['allowancePerDay'] = (float) $contractAllowance;
+            }
+            $amountCents = (int) round((float) ($item['allowancePerDay'] ?? 0) * $vehicleCount * 100);
+            $item['allowancePerDay'] = $amountCents / 100;
+            $totalCents += $amountCents;
+        }
+        unset($item);
+
+        $snapshot['items'] = $items;
+        $snapshot['total'] = $totalCents / 100;
+        $snapshot['vehicleCount'] = $vehicleCount;
+        $voucher->update([
+            'snapshot' => $snapshot,
+            'requested_for_approval_at' => now(),
+        ]);
+        $this->syncPerDiemPaymentLines($voucher->fresh());
+    }
+
+    private function allowanceSnapshotChanged(?array $before, array $after): bool
+    {
+        return $this->allowanceValues($before['items'] ?? [])
+            !== $this->allowanceValues($after['items'] ?? []);
+    }
+
+    private function allowancePayloadChanged(JobCard $jobCard, array $payload): bool
+    {
+        return $this->allowanceValues($jobCard->route_itinerary ?? [])
+            !== $this->allowanceValues($payload['route_itinerary'] ?? [])
+            || (float) ($jobCard->driver_allowance ?? 0) !== (float) ($payload['driver_allowance'] ?? 0)
+            || json_encode($jobCard->driver_allowances ?? [], JSON_THROW_ON_ERROR)
+                !== json_encode($payload['driver_allowances'] ?? [], JSON_THROW_ON_ERROR);
+    }
+
+    private function allowanceValues(array $items): array
+    {
+        return array_values(array_map(
+            fn (array $item): ?float => ($item['allowancePerDay'] ?? $item['allowance_per_day'] ?? null) === null
+                ? null
+                : round((float) ($item['allowancePerDay'] ?? $item['allowance_per_day']), 2),
+            $items,
+        ));
+    }
+
+    private function perDiemContractType($voucher, array $snapshot): string
+    {
+        $contractType = strtolower(trim((string) ($snapshot['contractType'] ?? '')));
+        if ($contractType === '' && ctype_digit((string) $voucher->driver_key)) {
+            $contractType = strtolower(trim((string) User::query()->whereKey((int) $voucher->driver_key)->value('contract_type')));
+        }
+        return $contractType;
+    }
+
+    private function allocatedVehiclesForDriver(JobCard $jobCard, $driverId)
+    {
+        if (!$jobCard->lead_id || !$driverId) {
+            return collect();
+        }
+
+        return SafariAllocation::query()
+            ->with('vehicle')
+            ->where('lead_id', $jobCard->lead_id)
+            ->where('driver_id', (int) $driverId)
+            ->get()
+            ->unique('vehicle_id')
+            ->values();
+    }
+
+    private function transformPerDiemVoucher($voucher): array
+    {
+        return [
             'id' => $voucher->id,
             'number' => $voucher->number(),
             'jobCardId' => $voucher->job_card_id,
+            'jobCardStatus' => $voucher->jobCard?->status,
             'generatedAt' => $voucher->created_at->toISOString(),
             'updatedAt' => $voucher->updated_at->toISOString(),
+            'requestedForApprovalAt' => $voucher->requested_for_approval_at?->toISOString(),
             'driverKey' => $voucher->driver_key,
-            ...$voucher->snapshot,
-        ])]);
+            'paymentStatus' => $voucher->payment_status ?: 'draft',
+            'paymentReference' => $voucher->payment_reference,
+            'paymentBatchReference' => $voucher->payment_batch_reference,
+            'approvedAt' => $voucher->approved_at?->toISOString(),
+            'exportedAt' => $voucher->exported_at?->toISOString(),
+            'confirmedAt' => $voucher->confirmed_at?->toISOString(),
+            'payments' => $this->visiblePerDiemPayments($voucher),
+            ...($voucher->snapshot ?: []),
+        ];
+    }
+
+    private function visiblePerDiemPayments($voucher): array
+    {
+        $snapshot = is_array($voucher->snapshot) ? $voucher->snapshot : [];
+        $contractType = $this->perDiemContractType($voucher, $snapshot);
+        return $voucher->paymentLines
+            ->map(fn ($payment) => $this->transformPerDiemPayment($payment))
+            ->values()
+            ->all();
+    }
+
+    private function transformPerDiemPayment($payment): array
+    {
+        return [
+            'id' => $payment->id,
+            'stage' => $payment->stage,
+            'amount' => (float) $payment->amount,
+            'requestedAmount' => $payment->requested_amount !== null ? (float) $payment->requested_amount : (float) $payment->amount,
+            'fuelDeduction' => (float) $payment->fuel_deduction,
+            'deductionReason' => $payment->deduction_reason,
+            'approvalReason' => $payment->approval_reason,
+            'status' => $payment->status,
+            'paymentReference' => $payment->payment_reference,
+            'paymentBatchReference' => $payment->payment_batch_reference,
+            'approvedAt' => $payment->approved_at?->toISOString(),
+            'exportedAt' => $payment->exported_at?->toISOString(),
+            'paidAt' => $payment->paid_at?->toISOString(),
+            'paymentProofPath' => $payment->payment_proof_path,
+        ];
     }
 
     public function perDiemPdf(Request $request, \App\Models\PerDiemVoucher $voucher): Response
@@ -366,12 +960,52 @@ class JobCardController extends Controller
         if ($request->user()->hasRole('Driver')) {
             abort_unless($voucher->driver_key === (string) $request->user()->id, 403);
         }
-        return $this->renderPerDiem($voucher);
+        abort_unless($voucher->paymentLines()->where('status', 'paid')->exists(), 422, 'The per diem PDF is available after payment is confirmed.');
+        abort_unless($voucher->confirmed_at, 422, 'The per diem voucher is created after payment is confirmed.');
+        $pdf = $this->renderPerDiem($voucher);
+        Storage::disk('local')->put('per-diem-vouchers/' . $voucher->number() . '.pdf', $pdf->getContent());
+        return $pdf;
+    }
+
+    private function storeConfirmedPerDiem(\App\Models\PerDiemVoucher $voucher): void
+    {
+        $voucher->load('paymentLines');
+        $activePayments = $voucher->paymentLines->reject(fn ($line) => $line->status === 'rejected');
+        if ($activePayments->isNotEmpty() && $activePayments->every(fn ($line) => $line->status === 'paid')) {
+            $voucher->update([
+                'payment_status' => 'paid',
+                'paid_at' => $voucher->paid_at ?: now(),
+                'confirmed_at' => $voucher->confirmed_at ?: now(),
+            ]);
+        }
+
+        $pdf = $this->renderPerDiem($voucher->fresh());
+        $path = 'per-diem-vouchers/' . $voucher->number() . '.pdf';
+        abort_unless(Storage::disk('local')->put($path, $pdf->getContent()), 500, 'Unable to generate the confirmed per diem PDF.');
     }
 
     private function renderPerDiem(\App\Models\PerDiemVoucher $voucher): Response
     {
         $voucherData = $voucher->snapshot;
+        $payments = $voucher->paymentLines()->where('status', '!=', 'rejected')->orderBy('id')->get();
+        $paidPayments = $payments->where('status', 'paid');
+        $approvedCents = $payments->whereIn('status', ['approved', 'exported', 'paid'])
+            ->sum(fn ($payment): int => (int) round((float) $payment->amount * 100));
+        $voucherData['items'] = PerDiemAllocation::acrossDates($voucherData['items'] ?? [], $approvedCents);
+        $voucherData['total'] = $approvedCents / 100;
+        $voucherData['paidAmount'] = (float) $paidPayments->sum('amount');
+        $voucherData['payments'] = $payments->map(fn ($payment) => [
+            'stage' => $payment->stage,
+            'amount' => (float) $payment->amount,
+            'status' => $payment->status,
+            'reference' => $payment->payment_reference,
+            'paidAt' => $payment->paid_at?->format('d M Y'),
+        ])->all();
+        $voucherData['paymentStatus'] = $paidPayments->isNotEmpty() && $paidPayments->count() < $payments->count()
+            ? 'partially paid'
+            : ($voucher->payment_status ?: 'draft');
+        $voucherData['paymentReference'] = $voucher->payment_reference;
+        $voucherData['paymentBatchReference'] = $voucher->payment_batch_reference;
         $jobCard = $voucher->jobCard()->with([
             'lead',
             'vehicle',
@@ -424,6 +1058,8 @@ class JobCardController extends Controller
             'driverLicense' => $driver?->driver_license ?? '',
             'guideLicense' => $driver?->tour_guide_license ?? '',
             'contractType' => $driver?->contract_type ?? '',
+            'bankName' => $driver?->bank_name ?? '',
+            'bankAccountNumber' => $driver?->bank_account_number ?? '',
             'plateNo' => $vehicle?->plate_no ?? '',
         ];
     }
@@ -460,7 +1096,12 @@ class JobCardController extends Controller
         }
 
         if (!empty($result['allocatedVehicles'])) {
-            $result['driverProfiles'] = array_column($result['allocatedVehicles'], 'driverProfile');
+            $result['driverProfiles'] = collect(array_column($result['allocatedVehicles'], 'driverProfile'))
+                ->unique(fn(array $profile): string => $profile['id']
+                    ? 'id:' . $profile['id']
+                    : 'name:' . strtolower(trim($profile['name'] ?? '')))
+                ->values()
+                ->all();
         } else {
             $vehicle = $jobCard->leaseAllocation?->vehicle ?? $jobCard->vehicle;
             $driver = $jobCard->leaseAllocation?->driver;
@@ -843,6 +1484,7 @@ class JobCardController extends Controller
             'driverAllowance' => $jobCard->driver_allowance !== null ? (float) $jobCard->driver_allowance : null,
             'driverAllowances' => is_array($jobCard->driver_allowances) ? $jobCard->driver_allowances : [],
             'perDiemCount' => (int) ($jobCard->per_diem_vouchers_count ?? 0),
+            'paidPerDiemCount' => (int) ($jobCard->paid_per_diem_vouchers_count ?? 0),
             'assignedDriverCount' => (int) ($jobCard->assigned_driver_count ?? 0),
             'perDiemUpdatedAt' => $jobCard->per_diem_vouchers_max_updated_at
                 ? \Carbon\Carbon::parse($jobCard->per_diem_vouchers_max_updated_at)->toISOString()

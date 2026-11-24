@@ -16,6 +16,7 @@ use App\Http\Controllers\Api\VehicleHistoryController;
 use App\Http\Controllers\Api\VehicleAvailabilityExportController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\JobCardController;
+use App\Http\Controllers\Api\DepartureArrivalReportController;
 use App\Http\Controllers\Api\LeaseContractController;
 use App\Http\Controllers\Api\LeaseAllocationController;
 use App\Http\Controllers\Api\LeaseOdometerLogController;
@@ -239,9 +240,18 @@ Route::middleware(['auth:sanctum', 'audit.mutations', 'restrict.deletes'])->grou
 
     // Job Cards
     Route::get('/job-cards', [JobCardController::class, 'index'])->middleware('permission:job-cards.view');
+    Route::get('/departure-arrival-report/export/pdf', [DepartureArrivalReportController::class, 'pdf'])->middleware('permission:job-cards.view');
+    Route::get('/departure-arrival-report/export/excel', [DepartureArrivalReportController::class, 'excel'])->middleware('permission:job-cards.view');
     Route::get('/job-cards/{jobCard}', [JobCardController::class, 'show'])->middleware('permission:job-cards.view');
     Route::patch('/job-cards/{jobCard}/status', [JobCardController::class, 'updateStatus'])->middleware('permission:job-cards.view');
     Route::get('/per-diems', [JobCardController::class, 'perDiemIndex'])->middleware('permission:job-cards.view');
+    Route::post('/per-diems/approve-payments', [JobCardController::class, 'approvePerDiemPayments'])->middleware('permission:job-cards.update');
+    Route::post('/per-diems/bank-export', [JobCardController::class, 'exportPerDiemBankFile'])->middleware('permission:job-cards.update');
+    Route::post('/per-diems/confirm-bank-upload', [JobCardController::class, 'confirmPerDiemBankUpload'])->middleware('permission:job-cards.update');
+    Route::post('/per-diem-payments/{payment}/paid', [JobCardController::class, 'markPerDiemPaid'])->middleware('permission:job-cards.update');
+    Route::post('/per-diem-payments/batch-paid', [JobCardController::class, 'markPerDiemBatchPaid'])->middleware('permission:job-cards.update');
+    Route::patch('/per-diem-payments/{payment}', [JobCardController::class, 'updatePerDiemPayment'])->middleware('permission:job-cards.update');
+    Route::patch('/per-diem-payments/{payment}/deduction', [JobCardController::class, 'updatePerDiemDeduction'])->middleware('permission:job-cards.update');
     Route::get('/per-diems/{voucher}/pdf', [JobCardController::class, 'perDiemPdf'])->middleware('permission:job-cards.view');
     Route::post('/job-cards/{jobCard}/per-diem', [JobCardController::class, 'perDiem'])->middleware('permission:job-cards.view');
     Route::get('/job-cards/{jobCard}/pdf', [JobCardController::class, 'pdf'])->middleware('permission:job-cards.view');
