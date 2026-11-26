@@ -350,8 +350,19 @@
                     </td>
                     <td>
                         <div class="sign-label">Driver Confirmation</div>
-                        <div class="sign-line">Driver Name & Signature</div>
-                        <div style="margin-top:10px;">Date: ____________________</div>
+                        @if (!empty($driverSignatureDataUri))
+                            <img src="{{ $driverSignatureDataUri }}" alt="Driver signature"
+                                style="display:block; max-width:88%; max-height:60px; margin-top:6px;">
+                            <div class="sign-line" style="margin-top:2px;">
+                                {{ $inspection['driverName'] ?? 'Driver' }} &mdash; Signature
+                            </div>
+                            <div style="margin-top:10px;">Date:
+                                {{ !empty($inspection['driverSignedAt']) ? \Illuminate\Support\Carbon::parse($inspection['driverSignedAt'])->format('Y-m-d H:i') : '____________________' }}
+                            </div>
+                        @else
+                            <div class="sign-line">Driver Name & Signature</div>
+                            <div style="margin-top:10px;">Date: ____________________</div>
+                        @endif
                     </td>
                 </tr>
             </table>

@@ -29,7 +29,7 @@ class InspectionController extends Controller
     public function index(Request $request): JsonResponse
     {
         $query = Inspection::query()
-            ->with('items', 'images', 'lead', 'vehicle', 'leaseAllocation.leaseContract')
+            ->with('items', 'images', 'lead', 'vehicle', 'leaseAllocation.leaseContract', 'user:id,name')
             ->latest('id');
 
         if (! $this->canViewAllInspections($request)) {
@@ -55,7 +55,7 @@ class InspectionController extends Controller
             ], 403);
         }
 
-        $inspection->load('items', 'images', 'lead', 'vehicle', 'leaseAllocation.leaseContract');
+        $inspection->load('items', 'images', 'lead', 'vehicle', 'leaseAllocation.leaseContract', 'user:id,name');
 
         return response()->json([
             'message' => 'Inspection fetched successfully.',
@@ -92,6 +92,7 @@ class InspectionController extends Controller
             'remarks' => ['nullable', 'string'],
             'images' => ['nullable', 'array'],
             'images.*' => ['string'],
+            'driver_signature' => ['nullable', 'string', 'max:4000000'],
         ]);
 
         $existingInspection = $this->findDuplicateInspection(
@@ -125,7 +126,18 @@ class InspectionController extends Controller
 
         $parkingLocation = $this->resolveParkingLocation($request, $validated);
 
-        $inspection = DB::transaction(function () use ($request, $validated, $odometerPayload, $parkingLocation): Inspection {
+        $signaturePath = null;
+        if (! empty($validated['driver_signature'])) {
+            $signaturePath = $this->storeDriverSignature((string) $validated['driver_signature']);
+            if ($signaturePath === null) {
+                return response()->json([
+                    'message' => 'The driver signature must be a PNG image.',
+                    'errors' => ['driver_signature' => ['The driver signature must be a PNG image.']],
+                ], 422);
+            }
+        }
+
+        $inspection = DB::transaction(function () use ($request, $validated, $odometerPayload, $parkingLocation, $signaturePath): Inspection {
             $inspection = Inspection::create([
                 'user_id' => $request->user()->id,
                 'lead_id' => $validated['lead']['id'] ?? null,
@@ -136,6 +148,8 @@ class InspectionController extends Controller
                 'odometer_in' => $odometerPayload['odometer_in'],
                 'parking_location' => $parkingLocation,
                 'remarks' => $validated['remarks'] ?? null,
+                'driver_signature_path' => $signaturePath,
+                'driver_signed_at' => $signaturePath !== null ? now() : null,
             ]);
 
             foreach ($validated['items'] as $index => $item) {
@@ -164,7 +178,7 @@ class InspectionController extends Controller
             return $inspection;
         });
 
-        $inspection->load('items', 'images', 'lead', 'vehicle', 'leaseAllocation.leaseContract');
+        $inspection->load('items', 'images', 'lead', 'vehicle', 'leaseAllocation.leaseContract', 'user:id,name');
 
         return response()->json([
             'message' => 'Inspection submitted successfully.',
@@ -194,7 +208,20 @@ class InspectionController extends Controller
             'odometer_reading' => ['nullable', 'integer', 'min:0'],
             'odometer_out' => ['nullable', 'integer', 'min:0'],
             'odometer_in' => ['nullable', 'integer', 'min:0'],
+            'driver_signature' => ['nullable', 'string', 'max:4000000'],
         ]);
+
+        $signaturePath = null;
+        if (! empty($validated['driver_signature'])) {
+            $signaturePath = $this->storeDriverSignature((string) $validated['driver_signature']);
+            if ($signaturePath === null) {
+                return response()->json([
+                    'message' => 'The driver signature must be a PNG image.',
+                    'errors' => ['driver_signature' => ['The driver signature must be a PNG image.']],
+                ], 422);
+            }
+        }
+        unset($validated['driver_signature']);
 
         $targetType = (string) ($validated['type'] ?? $inspection->type);
 
@@ -231,6 +258,11 @@ class InspectionController extends Controller
         );
 
         $updatePayload = array_merge($validated, $odometerPayload);
+        $previousSignaturePath = $inspection->driver_signature_path;
+        if ($signaturePath !== null) {
+            $updatePayload['driver_signature_path'] = $signaturePath;
+            $updatePayload['driver_signed_at'] = now();
+        }
         if ($request->hasAny(['parking_location', 'parkingLocation', 'parked_location', 'parkedLocation'])) {
             $updatePayload['parking_location'] = $this->resolveParkingLocation($request, $validated);
         }
@@ -242,7 +274,11 @@ class InspectionController extends Controller
             $this->syncVehicleAfterPostDeparture($inspection, $request);
         });
 
-        $inspection->load('items', 'images', 'lead', 'vehicle', 'leaseAllocation.leaseContract');
+        if ($signaturePath !== null && $previousSignaturePath && $previousSignaturePath !== $signaturePath) {
+            Storage::disk('public')->delete($previousSignaturePath);
+        }
+
+        $inspection->load('items', 'images', 'lead', 'vehicle', 'leaseAllocation.leaseContract', 'user:id,name');
 
         return response()->json([
             'message' => 'Inspection updated successfully.',
@@ -279,7 +315,7 @@ class InspectionController extends Controller
             ], 403);
         }
 
-        $inspection->load('items', 'images', 'lead', 'vehicle', 'leaseAllocation.leaseContract');
+        $inspection->load('items', 'images', 'lead', 'vehicle', 'leaseAllocation.leaseContract', 'user:id,name');
 
         $company = [
             'name' => Setting::get('company_name', config('app.name')),
@@ -322,6 +358,9 @@ class InspectionController extends Controller
             'images' => $images,
             'company' => $company,
             'logoDataUri' => $this->resolveLogoDataUri(),
+            'driverSignatureDataUri' => $inspection->driver_signature_path
+                ? $this->resolveImageDataUri($inspection->driver_signature_path)
+                : null,
         ])->setPaper('a4', 'portrait');
 
         $filename = 'inspection-checklist-' . $inspection->id . '.pdf';
@@ -415,6 +454,12 @@ class InspectionController extends Controller
                 'path' => $image->path,
                 'sortOrder' => $image->sort_order,
             ])->values(),
+            'driverName' => $inspection->user?->name,
+            'driverSignature' => $inspection->driver_signature_path,
+            'driverSignatureUrl' => $inspection->driver_signature_path
+                ? Storage::url($inspection->driver_signature_path)
+                : null,
+            'driverSignedAt' => $inspection->driver_signed_at?->toIso8601String(),
             'createdAt' => $inspection->created_at?->toIso8601String(),
             'updatedAt' => $inspection->updated_at?->toIso8601String(),
         ];
@@ -570,6 +615,25 @@ class InspectionController extends Controller
         }
 
         $path = 'inspection-images/' . now()->format('Y/m') . '/' . Str::uuid() . '.' . $extension;
+        Storage::disk('public')->put($path, $decoded);
+
+        return $path;
+    }
+
+    /**
+     * Persist a base64 PNG signature captured on the tablet. Returns null when
+     * the payload is not a decodable PNG so the request can be rejected.
+     */
+    private function storeDriverSignature(string $dataUri): ?string
+    {
+        $payload = preg_replace('/^data:image\/png;base64,/i', '', trim($dataUri));
+        $decoded = base64_decode((string) $payload, true);
+
+        if ($decoded === false || ! str_starts_with($decoded, "\x89PNG\r\n\x1a\n")) {
+            return null;
+        }
+
+        $path = 'inspection-signatures/' . now()->format('Y/m') . '/' . Str::uuid() . '.png';
         Storage::disk('public')->put($path, $decoded);
 
         return $path;
