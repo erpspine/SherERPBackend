@@ -29,7 +29,7 @@ class SafariAllocationController extends Controller
         $query = SafariAllocation::query()
             ->when(
                 $compact,
-                fn($query) => $query->with(['lead', 'vehicle']),
+                fn($query) => $query->with(['lead', 'vehicle', 'driver:id,name']),
                 fn($query) => $query
                     ->with(['lead.quotations', 'proformaInvoice', 'vehicle', 'driver'])
                     ->withCount('odometerLogs')
@@ -572,6 +572,11 @@ class SafariAllocationController extends Controller
                 'plateNo' => $allocation->vehicle->plate_no,
                 'make' => $allocation->vehicle->make,
                 'model' => $allocation->vehicle->model,
+            ] : null,
+            'driverId' => $allocation->driver_id,
+            'driver' => $allocation->driver ? [
+                'id' => $allocation->driver->id,
+                'name' => $allocation->driver->name,
             ] : null,
         ];
     }

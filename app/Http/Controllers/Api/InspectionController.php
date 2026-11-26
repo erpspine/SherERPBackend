@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Inspection;
+use App\Models\LeaseAllocation;
 use App\Models\SafariAllocation;
 use App\Models\Setting;
 use App\Models\User;
@@ -153,7 +154,12 @@ class InspectionController extends Controller
                 'odometer_in' => $odometerPayload['odometer_in'],
                 'parking_location' => $parkingLocation,
                 'remarks' => $validated['remarks'] ?? null,
-                'driver_name' => $this->cleanName($validated['driver_name'] ?? null),
+                'driver_name' => $this->cleanName($validated['driver_name'] ?? null)
+                    ?? $this->allocationDriverName(
+                        leadId: isset($validated['lead']['id']) ? (int) $validated['lead']['id'] : null,
+                        leaseAllocationId: isset($validated['leaseAllocationId']) ? (int) $validated['leaseAllocationId'] : null,
+                        vehicleId: (int) $validated['vehicle']['id'],
+                    ),
                 'driver_signature_path' => $signaturePath,
                 'driver_signed_at' => $signaturePath !== null ? now() : null,
             ] + $managerColumns);
@@ -670,6 +676,29 @@ class InspectionController extends Controller
             'manager_signature_path' => $path,
             'manager_signed_at' => now(),
         ];
+    }
+
+    /**
+     * The driver/guide assigned to the safari (or long-term lease) the
+     * inspection is for, used when the app did not send a name.
+     */
+    private function allocationDriverName(?int $leadId, ?int $leaseAllocationId, int $vehicleId): ?string
+    {
+        if ($leaseAllocationId !== null) {
+            return LeaseAllocation::query()->with('driver:id,name')->find($leaseAllocationId)?->driver?->name;
+        }
+
+        if ($leadId === null) {
+            return null;
+        }
+
+        return SafariAllocation::query()
+            ->with('driver:id,name')
+            ->where('lead_id', $leadId)
+            ->where('vehicle_id', $vehicleId)
+            ->whereNotNull('driver_id')
+            ->latest('id')
+            ->first()?->driver?->name;
     }
 
     private function cleanName(mixed $value): ?string
