@@ -341,29 +341,47 @@
                 </table>
             @endif
 
+            @php
+                $signatureBoxes = [
+                    [
+                        'label' => 'Manager Approval',
+                        'image' => $managerSignatureDataUri ?? null,
+                        'name' => $inspection['managerName'] ?? null,
+                        'placeholder' => 'Manager Name & Signature',
+                        'signedAt' => $inspection['managerSignedAt'] ?? null,
+                    ],
+                    [
+                        'label' => 'Driver/Guide',
+                        'image' => $driverSignatureDataUri ?? null,
+                        'name' => $inspection['driverName'] ?? null,
+                        'placeholder' => 'Driver/Guide Name & Signature',
+                        'signedAt' => $inspection['driverSignedAt'] ?? null,
+                    ],
+                ];
+            @endphp
             <table class="signatures">
                 <tr>
-                    <td>
-                        <div class="sign-label">Manager Approval</div>
-                        <div class="sign-line">Manager Name & Signature</div>
-                        <div style="margin-top:10px;">Date: ____________________</div>
-                    </td>
-                    <td>
-                        <div class="sign-label">Driver Confirmation</div>
-                        @if (!empty($driverSignatureDataUri))
-                            <img src="{{ $driverSignatureDataUri }}" alt="Driver signature"
-                                style="display:block; max-width:88%; max-height:60px; margin-top:6px;">
-                            <div class="sign-line" style="margin-top:2px;">
-                                {{ $inspection['driverName'] ?? 'Driver' }} &mdash; Signature
+                    @foreach ($signatureBoxes as $box)
+                        <td>
+                            <div class="sign-label">{{ $box['label'] }}</div>
+                            <div style="height:62px; margin-top:4px;">
+                                @if (!empty($box['image']))
+                                    <img src="{{ $box['image'] }}" alt="{{ $box['label'] }} signature"
+                                        style="max-width:88%; max-height:60px;">
+                                @endif
+                            </div>
+                            <div class="sign-line" style="margin-top:0;">
+                                @if (!empty($box['image']) || !empty($box['name']))
+                                    {{ $box['name'] ?: '____________________' }} &mdash; Signature
+                                @else
+                                    {{ $box['placeholder'] }}
+                                @endif
                             </div>
                             <div style="margin-top:10px;">Date:
-                                {{ !empty($inspection['driverSignedAt']) ? \Illuminate\Support\Carbon::parse($inspection['driverSignedAt'])->format('Y-m-d H:i') : '____________________' }}
+                                {{ !empty($box['image']) && !empty($box['signedAt']) ? \Illuminate\Support\Carbon::parse($box['signedAt'])->format('Y-m-d H:i') : '____________________' }}
                             </div>
-                        @else
-                            <div class="sign-line">Driver Name & Signature</div>
-                            <div style="margin-top:10px;">Date: ____________________</div>
-                        @endif
-                    </td>
+                        </td>
+                    @endforeach
                 </tr>
             </table>
 

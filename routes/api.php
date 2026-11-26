@@ -28,6 +28,7 @@ use App\Http\Controllers\Api\ChecklistController;
 use App\Http\Controllers\Api\ChecklistItemController;
 use App\Http\Controllers\Api\DestinationDistanceController;
 use App\Http\Controllers\Api\InspectionController;
+use App\Http\Controllers\Api\UserSignatureController;
 use App\Http\Controllers\Api\IncidentReportController;
 use App\Http\Controllers\Api\InventoryController;
 use App\Http\Controllers\Api\FuelRequisitionController;
@@ -44,6 +45,9 @@ Route::middleware(['auth:sanctum', 'audit.mutations', 'restrict.deletes'])->grou
     Route::get('/dashboard', [DashboardController::class, 'index'])->middleware('permission:dashboard.view');
     Route::get('/audit-logs', [AuditLogController::class, 'index'])->middleware('permission:users.view');
     Route::get('/me', [UserController::class, 'me']);
+    Route::get('/me/signature', [UserSignatureController::class, 'show']);
+    Route::post('/me/signature', [UserSignatureController::class, 'store']);
+    Route::delete('/me/signature', [UserSignatureController::class, 'destroy']);
 
     Route::get('/users', [UserController::class, 'index'])->middleware('permission:users.view');
     Route::get('/users/{user}', [UserController::class, 'show'])->middleware('permission:users.view');

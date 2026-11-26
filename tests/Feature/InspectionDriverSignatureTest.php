@@ -47,6 +47,34 @@ class InspectionDriverSignatureTest extends TestCase
         Storage::disk('public')->assertMissing($path);
     }
 
+    public function test_saved_user_signature_is_applied_as_manager_approval(): void
+    {
+        Storage::fake('public');
+        [$user, $vehicle, $allocation] = $this->seedLease();
+        Sanctum::actingAs($user);
+
+        $saved = $this->postJson('/api/me/signature', [
+            'signature' => 'data:image/png;base64,' . self::PNG_BASE64,
+        ])->assertOk();
+        $userSignature = $saved->json('signature');
+        Storage::disk('public')->assertExists($userSignature);
+        $this->getJson('/api/me/signature')->assertJsonPath('signature', $userSignature);
+
+        $response = $this->postJson('/api/inspections', $this->payload($allocation->id, $vehicle->id) + [
+            'driver_signature' => self::PNG_BASE64,
+            'driver_name' => 'Juma Guide',
+        ])->assertCreated();
+
+        $response->assertJsonPath('inspection.driverName', 'Juma Guide')
+            ->assertJsonPath('inspection.managerName', $user->name);
+        $managerPath = $response->json('inspection.managerSignature');
+        $this->assertNotSame($userSignature, $managerPath, 'inspection keeps its own copy');
+        Storage::disk('public')->assertExists($managerPath);
+
+        $this->deleteJson('/api/me/signature')->assertOk()->assertJsonPath('signature', null);
+        Storage::disk('public')->assertExists($managerPath);
+    }
+
     public function test_non_png_signature_is_rejected(): void
     {
         Storage::fake('public');

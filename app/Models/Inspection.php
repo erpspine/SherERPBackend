@@ -18,14 +18,19 @@ class Inspection extends Model
         'odometer_in',
         'parking_location',
         'remarks',
+        'driver_name',
         'driver_signature_path',
         'driver_signed_at',
+        'manager_name',
+        'manager_signature_path',
+        'manager_signed_at',
     ];
 
     protected $casts = [
         'odometer_out' => 'integer',
         'odometer_in' => 'integer',
         'driver_signed_at' => 'datetime',
+        'manager_signed_at' => 'datetime',
     ];
 
     public function user(): BelongsTo

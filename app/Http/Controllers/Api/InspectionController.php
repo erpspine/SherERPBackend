@@ -6,7 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Models\Inspection;
 use App\Models\SafariAllocation;
 use App\Models\Setting;
+use App\Models\User;
 use App\Models\Vehicle;
+use App\Support\SignatureImage;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -93,6 +95,7 @@ class InspectionController extends Controller
             'images' => ['nullable', 'array'],
             'images.*' => ['string'],
             'driver_signature' => ['nullable', 'string', 'max:4000000'],
+            'driver_name' => ['nullable', 'string', 'max:255'],
         ]);
 
         $existingInspection = $this->findDuplicateInspection(
@@ -128,7 +131,7 @@ class InspectionController extends Controller
 
         $signaturePath = null;
         if (! empty($validated['driver_signature'])) {
-            $signaturePath = $this->storeDriverSignature((string) $validated['driver_signature']);
+            $signaturePath = SignatureImage::storeBase64Png((string) $validated['driver_signature'], 'inspection-signatures');
             if ($signaturePath === null) {
                 return response()->json([
                     'message' => 'The driver signature must be a PNG image.',
@@ -137,7 +140,9 @@ class InspectionController extends Controller
             }
         }
 
-        $inspection = DB::transaction(function () use ($request, $validated, $odometerPayload, $parkingLocation, $signaturePath): Inspection {
+        $managerColumns = $this->managerSignatureColumns($request->user());
+
+        $inspection = DB::transaction(function () use ($request, $validated, $odometerPayload, $parkingLocation, $signaturePath, $managerColumns): Inspection {
             $inspection = Inspection::create([
                 'user_id' => $request->user()->id,
                 'lead_id' => $validated['lead']['id'] ?? null,
@@ -148,9 +153,10 @@ class InspectionController extends Controller
                 'odometer_in' => $odometerPayload['odometer_in'],
                 'parking_location' => $parkingLocation,
                 'remarks' => $validated['remarks'] ?? null,
+                'driver_name' => $this->cleanName($validated['driver_name'] ?? null),
                 'driver_signature_path' => $signaturePath,
                 'driver_signed_at' => $signaturePath !== null ? now() : null,
-            ]);
+            ] + $managerColumns);
 
             foreach ($validated['items'] as $index => $item) {
                 $inspection->items()->create([
@@ -209,11 +215,12 @@ class InspectionController extends Controller
             'odometer_out' => ['nullable', 'integer', 'min:0'],
             'odometer_in' => ['nullable', 'integer', 'min:0'],
             'driver_signature' => ['nullable', 'string', 'max:4000000'],
+            'driver_name' => ['nullable', 'string', 'max:255'],
         ]);
 
         $signaturePath = null;
         if (! empty($validated['driver_signature'])) {
-            $signaturePath = $this->storeDriverSignature((string) $validated['driver_signature']);
+            $signaturePath = SignatureImage::storeBase64Png((string) $validated['driver_signature'], 'inspection-signatures');
             if ($signaturePath === null) {
                 return response()->json([
                     'message' => 'The driver signature must be a PNG image.',
@@ -262,6 +269,12 @@ class InspectionController extends Controller
         if ($signaturePath !== null) {
             $updatePayload['driver_signature_path'] = $signaturePath;
             $updatePayload['driver_signed_at'] = now();
+        }
+        if (array_key_exists('driver_name', $updatePayload)) {
+            $updatePayload['driver_name'] = $this->cleanName($updatePayload['driver_name']);
+        }
+        if ($inspection->manager_signature_path === null) {
+            $updatePayload += $this->managerSignatureColumns($request->user());
         }
         if ($request->hasAny(['parking_location', 'parkingLocation', 'parked_location', 'parkedLocation'])) {
             $updatePayload['parking_location'] = $this->resolveParkingLocation($request, $validated);
@@ -361,6 +374,9 @@ class InspectionController extends Controller
             'driverSignatureDataUri' => $inspection->driver_signature_path
                 ? $this->resolveImageDataUri($inspection->driver_signature_path)
                 : null,
+            'managerSignatureDataUri' => $inspection->manager_signature_path
+                ? $this->resolveImageDataUri($inspection->manager_signature_path)
+                : null,
         ])->setPaper('a4', 'portrait');
 
         $filename = 'inspection-checklist-' . $inspection->id . '.pdf';
@@ -454,12 +470,23 @@ class InspectionController extends Controller
                 'path' => $image->path,
                 'sortOrder' => $image->sort_order,
             ])->values(),
-            'driverName' => $inspection->user?->name,
+            // Inspections signed before driver_name existed were signed by the
+            // submitting user, so fall back to their name for those only.
+            'driverName' => $inspection->driver_name
+                ?? ($inspection->driver_signature_path && $inspection->manager_signature_path === null
+                    ? $inspection->user?->name
+                    : null),
             'driverSignature' => $inspection->driver_signature_path,
             'driverSignatureUrl' => $inspection->driver_signature_path
                 ? Storage::url($inspection->driver_signature_path)
                 : null,
             'driverSignedAt' => $inspection->driver_signed_at?->toIso8601String(),
+            'managerName' => $inspection->manager_name,
+            'managerSignature' => $inspection->manager_signature_path,
+            'managerSignatureUrl' => $inspection->manager_signature_path
+                ? Storage::url($inspection->manager_signature_path)
+                : null,
+            'managerSignedAt' => $inspection->manager_signed_at?->toIso8601String(),
             'createdAt' => $inspection->created_at?->toIso8601String(),
             'updatedAt' => $inspection->updated_at?->toIso8601String(),
         ];
@@ -621,22 +648,35 @@ class InspectionController extends Controller
     }
 
     /**
-     * Persist a base64 PNG signature captured on the tablet. Returns null when
-     * the payload is not a decodable PNG so the request can be rejected.
+     * The submitting user's saved signature, applied as Manager Approval.
+     * Drivers never approve, and users without a saved signature leave the
+     * box for a hand signature on the printed PDF.
+     *
+     * @return array<string, mixed>
      */
-    private function storeDriverSignature(string $dataUri): ?string
+    private function managerSignatureColumns(?User $user): array
     {
-        $payload = preg_replace('/^data:image\/png;base64,/i', '', trim($dataUri));
-        $decoded = base64_decode((string) $payload, true);
-
-        if ($decoded === false || ! str_starts_with($decoded, "\x89PNG\r\n\x1a\n")) {
-            return null;
+        if ($user === null || $user->hasRole('Driver') || empty($user->signature_path)) {
+            return [];
         }
 
-        $path = 'inspection-signatures/' . now()->format('Y/m') . '/' . Str::uuid() . '.png';
-        Storage::disk('public')->put($path, $decoded);
+        $path = SignatureImage::copy((string) $user->signature_path, 'inspection-signatures');
+        if ($path === null) {
+            return [];
+        }
 
-        return $path;
+        return [
+            'manager_name' => $user->name,
+            'manager_signature_path' => $path,
+            'manager_signed_at' => now(),
+        ];
+    }
+
+    private function cleanName(mixed $value): ?string
+    {
+        $name = trim((string) ($value ?? ''));
+
+        return $name === '' ? null : $name;
     }
 
     private function normalizeStoredInspectionImagePath(string $path): ?string
