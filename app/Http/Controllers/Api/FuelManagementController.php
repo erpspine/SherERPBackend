@@ -16,10 +16,64 @@ use Illuminate\Validation\ValidationException;
 
 class FuelManagementController extends Controller
 {
+    private const TRANSFER_PLATE = 'T888EKX';
+
     public function index(Request $request)
     {
         $feed = $this->fuelRows($request);
         return response()->json($feed);
+    }
+
+    public function saveTransfer(Request $request)
+    {
+        return $this->persistTransfer($request);
+    }
+
+    public function updateTransfer(Request $request, SafariFuelEntry $entry)
+    {
+        abort_unless($entry->entry_type === 'transfer', 404);
+        return $this->persistTransfer($request, $entry);
+    }
+
+    public function destroyTransfer(Request $request, SafariFuelEntry $entry)
+    {
+        abort_unless($entry->entry_type === 'transfer', 404);
+        $entry->delete();
+        return response()->json(['message' => 'Transfer fuel entry deleted.']);
+    }
+
+    private function persistTransfer(Request $request, ?SafariFuelEntry $entry = null)
+    {
+        $data = $request->validate([
+            'filled_at' => ['required', 'date_format:Y-m-d'],
+            'litres_filled' => ['required', 'numeric', 'min:0', 'max:10000'],
+            'litres_filled_end' => ['nullable', 'numeric', 'min:0', 'max:10000'],
+            'extra_litres' => ['required', 'numeric', 'min:0', 'max:10000'],
+            'start_km' => ['required', 'integer', 'min:0', 'max:2147483647'],
+            'end_km' => ['nullable', 'integer', 'gte:start_km', 'max:2147483647'],
+        ]);
+        $vehicle = Vehicle::whereRaw('UPPER(REPLACE(plate_no, " ", "")) = ?', [self::TRANSFER_PLATE])->firstOrFail();
+        $driverId = $vehicle->assigned_driver_id;
+        $query = SafariFuelEntry::where('vehicle_id', $vehicle->id)->where('entry_type', 'transfer');
+        if ($entry) $query->whereKey('!=', $entry->id);
+        foreach ($query->get() as $other) {
+            $before = $other->start_km < $data['start_km'];
+            if ($other->start_km == $data['start_km'] || ($before && ($other->end_km > $data['start_km'] || $other->filled_at > $data['filled_at'])) || (!$before && (($data['end_km'] ?? $data['start_km']) > $other->start_km || $data['filled_at'] > $other->filled_at))) {
+                throw ValidationException::withMessages(['start_km' => 'KM readings or refill date conflict with another transfer fuel record.']);
+            }
+        }
+        $record = $entry ?: new SafariFuelEntry();
+        $record->fill(array_merge($data, [
+            'entry_type' => 'transfer',
+            'vehicle_id' => $vehicle->id,
+            'driver_id' => $driverId,
+            'safari_allocation_id' => null,
+            'lease_allocation_id' => null,
+            'tank_capacity' => 0,
+            'expected_average' => 7,
+        ]));
+        $record->save();
+        return response()->json(['message' => 'Transfer fuel entry saved.']);
     }
 
     public function saveMonthlyPrice(Request $request)
@@ -278,8 +332,14 @@ class FuelManagementController extends Controller
                 'start_date' => $allocation->start_date?->format('Y-m-d'),
             ]))->values();
         // Load fuel history for vehicles in the visible allocations.
+        $transferVehicleIds = Vehicle::whereRaw('UPPER(REPLACE(plate_no, " ", "")) = ?', [self::TRANSFER_PLATE])->pluck('id');
         $entries = SafariFuelEntry::with(['safariAllocation.lead:id,booking_ref,group_name', 'safariAllocation.driver:id,name', 'leaseAllocation.leaseContract:id,client_name,group_name', 'leaseAllocation.driver:id,name', 'vehicle:id,vehicle_no,plate_no,assigned_driver_id', 'vehicle.assignedDriver:id,name', 'driver:id,name'])
-            ->whereIn('vehicle_id', $allocations->pluck('vehicle_id'))->orderBy('start_km')->orderBy('id')->get();
+            ->where(function ($query) use ($allocations, $transferVehicleIds) {
+                $query->whereIn('vehicle_id', $allocations->pluck('vehicle_id'))
+                    ->orWhere(function ($transfer) use ($transferVehicleIds) {
+                        $transfer->where('entry_type', 'transfer')->whereIn('vehicle_id', $transferVehicleIds);
+                    });
+            })->orderBy('start_km')->orderBy('id')->get();
         $groups = $entries->groupBy('vehicle_id');
         $rows = [];
         foreach ($groups as $group) {
@@ -294,6 +354,7 @@ class FuelManagementController extends Controller
                     'driver' => $driver?->toArray(),
                     'driver_id' => $driver?->id,
                     'trip_days' => $days,
+                    'is_transfer' => $entry->entry_type === 'transfer',
                 ]);
             }
         }
@@ -305,6 +366,7 @@ class FuelManagementController extends Controller
             'allocations' => $allocations,
             'entries' => array_reverse($rows),
             'profiles' => DB::table('vehicle_fuel_profiles')->whereIn('vehicle_id', $allocations->pluck('vehicle_id'))->get(),
+            'transfer_vehicles' => Vehicle::with('assignedDriver:id,name')->whereRaw('UPPER(REPLACE(plate_no, " ", "")) = ?', [self::TRANSFER_PLATE])->get(['id', 'vehicle_no', 'plate_no', 'assigned_driver_id']),
         ];
     }
 

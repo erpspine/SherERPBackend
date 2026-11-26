@@ -304,6 +304,9 @@ Route::middleware(['auth:sanctum', 'audit.mutations', 'restrict.deletes'])->grou
     Route::delete('/lease-proforma-invoices/{leaseProformaInvoice}/payments/{payment}', [LeaseProformaInvoiceController::class, 'deletePayment'])->middleware('permission:invoice-payments.delete');
 
     Route::get('/fuel-management', [\App\Http\Controllers\Api\FuelManagementController::class, 'index'])->middleware(['permission:odometer-logs.view', 'permission:safari-allocations.view']);
+    Route::post('/fuel-management/transfer', [\App\Http\Controllers\Api\FuelManagementController::class, 'saveTransfer'])->middleware('permission:odometer-logs.create');
+    Route::put('/fuel-management/transfer/{entry}', [\App\Http\Controllers\Api\FuelManagementController::class, 'updateTransfer'])->middleware('permission:odometer-logs.update');
+    Route::delete('/fuel-management/transfer/{entry}', [\App\Http\Controllers\Api\FuelManagementController::class, 'destroyTransfer'])->middleware('permission:odometer-logs.delete');
     Route::get('/fuel-management/export/pdf', [\App\Http\Controllers\Api\FuelManagementController::class, 'exportPdf'])->middleware(['permission:odometer-logs.view', 'permission:safari-allocations.view']);
     Route::put('/fuel-management/monthly-price', [\App\Http\Controllers\Api\FuelManagementController::class, 'saveMonthlyPrice'])->middleware(['permission:odometer-logs.update', 'permission:safari-allocations.view']);
     Route::put('/fuel-management/monthly-deduction', [\App\Http\Controllers\Api\FuelManagementController::class, 'saveMonthlyDeduction'])->middleware(['permission:odometer-logs.update', 'permission:safari-allocations.view']);

@@ -761,7 +761,13 @@ class JobCardController extends Controller
 
     private function syncPerDiemPaymentLines($voucher): void
     {
-        if ($voucher->paymentLines()->exists()) return;
+        // perDiemIndex() eager-loads paymentLines for every voucher. Reuse that
+        // relation instead of issuing one exists query per voucher (N+1).
+        if ($voucher->relationLoaded('paymentLines')
+            ? $voucher->paymentLines->isNotEmpty()
+            : $voucher->paymentLines()->exists()) {
+            return;
+        }
         $snapshot = is_array($voucher->snapshot) ? $voucher->snapshot : [];
         $contractType = $this->perDiemContractType($voucher, $snapshot);
         if (($snapshot['contractType'] ?? '') !== ($contractType === 'freelance' ? 'Freelance' : ($snapshot['contractType'] ?? ''))) {
